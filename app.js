@@ -14,7 +14,7 @@ const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const User = require('./models/User');
-const { db, checkIfUsersExist, initializeDatabase } = require('./db/database');
+const { db, checkIfUsersExist, initializeDatabase, getCurrentMigrationVersion, get } = require('./db/database');
 const systemMonitor = require('./services/systemMonitor');
 const { uploadVideo, upload } = require('./middleware/uploadMiddleware');
 const { ensureDirectories, paths } = require('./utils/storage');
@@ -2380,42 +2380,46 @@ app.get('/api/server-time', (req, res) => {
     formattedTime: formattedTime
   });
 });
-const server = app.listen(port, '0.0.0.0', async () => {
+
+let server;
+async function startServer() {
   try {
     await initializeDatabase();
+    server = app.listen(port, '0.0.0.0', async () => {
+      const ipAddresses = getLocalIpAddresses();
+      console.log(`StreamFlow running at:`);
+      if (ipAddresses && ipAddresses.length > 0) {
+        ipAddresses.forEach(ip => {
+          console.log(`  http://${ip}:${port}`);
+        });
+      } else {
+        console.log(`  http://localhost:${port}`);
+      }
+      try {
+        const streams = await Stream.findAll(null, 'live');
+        if (streams && streams.length > 0) {
+          console.log(`Resetting ${streams.length} live streams to offline state...`);
+          for (const stream of streams) {
+            await Stream.updateStatus(stream.id, 'offline');
+          }
+        }
+      } catch (error) {
+        console.error('Error resetting stream statuses:', error);
+      }
+      schedulerService.init(streamingService);
+      try {
+        await streamingService.syncStreamStatuses();
+      } catch (error) {
+        console.error('Failed to sync stream statuses:', error);
+      }
+    });
+    server.timeout = 30 * 60 * 1000;
+    server.keepAliveTimeout = 30 * 60 * 1000;
+    server.headersTimeout = 30 * 60 * 1000;
   } catch (error) {
     console.error('Failed to initialize database:', error);
     process.exit(1);
   }
-  
-  const ipAddresses = getLocalIpAddresses();
-  console.log(`StreamFlow running at:`);
-  if (ipAddresses && ipAddresses.length > 0) {
-    ipAddresses.forEach(ip => {
-      console.log(`  http://${ip}:${port}`);
-    });
-  } else {
-    console.log(`  http://localhost:${port}`);
-  }
-  try {
-    const streams = await Stream.findAll(null, 'live');
-    if (streams && streams.length > 0) {
-      console.log(`Resetting ${streams.length} live streams to offline state...`);
-      for (const stream of streams) {
-        await Stream.updateStatus(stream.id, 'offline');
-      }
-    }
-  } catch (error) {
-    console.error('Error resetting stream statuses:', error);
-  }
-  schedulerService.init(streamingService);
-  try {
-    await streamingService.syncStreamStatuses();
-  } catch (error) {
-    console.error('Failed to sync stream statuses:', error);
-  }
-});
+}
 
-server.timeout = 30 * 60 * 1000;
-server.keepAliveTimeout = 30 * 60 * 1000;
-server.headersTimeout = 30 * 60 * 1000;
+startServer();
