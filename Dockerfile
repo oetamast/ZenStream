@@ -1,26 +1,19 @@
-# Gunakan image Node.js versi 18 (atau 16+)
 FROM node:18-slim
 
-# Install ffmpeg
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy package.json dan package-lock.json
-COPY package*.json ./
+ENV DATA_DIR=/data
 
-# Install dependencies
+COPY package*.json ./
 RUN npm install --production
 
-# Copy seluruh source code
 COPY . .
 
-# Buat folder yang dibutuhkan (jika belum ada)
-RUN mkdir -p db logs public/uploads/videos public/uploads/thumbnails
+RUN mkdir -p /app/db \
+  && mkdir -p /data/assets/videos /data/assets/audios /data/assets/sfx /data/assets/avatars /data/thumbs /data/logs
 
-# Expose port (default 7575, bisa diubah via .env)
-EXPOSE 7575
+EXPOSE 6969
 
-# Jalankan aplikasi
-CMD ["npm", "start"] 
+CMD ["npm", "start"]

@@ -3,7 +3,7 @@
 set -e
 
 echo "================================"
-echo "   StreamFlow Quick Installer  "
+echo "    ZenStream Quick Installer   "
 echo "================================"
 echo
 
@@ -34,14 +34,14 @@ sudo timedatectl set-timezone Asia/Jakarta
 
 echo "🔧 Setup firewall..."
 sudo ufw allow ssh
-sudo ufw allow 7575
+sudo ufw allow 6969
 sudo ufw --force enable
 
 echo "🚀 Installing PM2..."
 sudo npm install -g pm2
 
-echo "▶️ Starting StreamFlow..."
-pm2 start app.js --name streamflow
+echo "▶️ Starting ZenStream..."
+pm2 start app.js --name zenstream
 pm2 save
 
 echo
@@ -51,7 +51,7 @@ echo "================================"
 
 SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "IP_SERVER")
 echo
-echo "🌐 URL Akses: http://$SERVER_IP:7575"
+echo "🌐 URL Akses: http://$SERVER_IP:6969"
 echo
 echo "📋 Langkah selanjutnya:"
 echo "1. Buka URL di browser"

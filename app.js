@@ -17,7 +17,7 @@ const User = require('./models/User');
 const { db, checkIfUsersExist, initializeDatabase } = require('./db/database');
 const systemMonitor = require('./services/systemMonitor');
 const { uploadVideo, upload } = require('./middleware/uploadMiddleware');
-const { ensureDirectories } = require('./utils/storage');
+const { ensureDirectories, paths } = require('./utils/storage');
 const { getVideoInfo, generateThumbnail } = require('./utils/videoProcessor');
 const Video = require('./models/Video');
 const Playlist = require('./models/Playlist');
@@ -26,6 +26,14 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
+const jobsRouter = require('./routes/apiJobs');
+const schedulesRouter = require('./routes/apiSchedules');
+const sessionsRouter = require('./routes/apiSessions');
+const assetsRouter = require('./routes/apiAssets');
+const destinationsRouter = require('./routes/apiDestinations');
+const presetsRouter = require('./routes/apiPresets');
+const historyRouter = require('./routes/apiHistory');
+const settingsRouter = require('./routes/apiSettings');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('-----------------------------------');
@@ -40,9 +48,8 @@ process.on('uncaughtException', (error) => {
 });
 const app = express();
 app.set("trust proxy", 1);
-const port = process.env.PORT || 7575;
+const port = process.env.PORT || 6969;
 const tokens = new csrf();
-ensureDirectories();
 ensureDirectories();
 app.locals.helpers = {
   getUsername: function (req) {
@@ -157,20 +164,50 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Service-Worker-Allowed', '/');
-  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
-});
-
 app.use('/uploads', function (req, res, next) {
   res.header('Cache-Control', 'no-cache');
   res.header('Pragma', 'no-cache');
   res.header('Expires', '0');
   next();
 });
+
+app.use('/uploads/avatars', express.static(paths.avatars, {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    let contentType = 'application/octet-stream';
+    if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+    else if (ext === '.png') contentType = 'image/png';
+    else if (ext === '.gif') contentType = 'image/gif';
+    res.header('Content-Type', contentType);
+    res.header('Cache-Control', 'max-age=60, must-revalidate');
+  }
+}));
+
+app.use('/uploads/videos', express.static(paths.videos));
+app.use('/uploads/thumbnails', express.static(paths.thumbnails));
+
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
 app.use(express.json({ limit: '10gb' }));
+
+app.get(['/health', '/api/health'], (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// ZenStream v1 Basic API stubs (to be implemented)
+app.use('/api/jobs', jobsRouter);
+app.use('/api/schedules', schedulesRouter);
+app.use('/api/sessions', sessionsRouter);
+app.use('/api/assets', assetsRouter);
+app.use('/api/destinations', destinationsRouter);
+app.use('/api/presets', presetsRouter);
+app.use('/api/history', historyRouter);
+app.use('/api/settings', settingsRouter);
 
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
@@ -1349,12 +1386,11 @@ app.post('/api/videos/upload', isAuthenticated, (req, res, next) => {
         }
         const thumbnailFilename = `thumb-${path.parse(req.file.filename).name}.jpg`;
         const thumbnailPath = `/uploads/thumbnails/${thumbnailFilename}`;
-        const fullThumbnailPath = path.join(__dirname, 'public', thumbnailPath);
         ffmpeg(fullFilePath)
           .screenshots({
             timestamps: ['10%'],
             filename: thumbnailFilename,
-            folder: path.join(__dirname, 'public', 'uploads', 'thumbnails'),
+            folder: paths.thumbnails,
             size: '854x480'
           })
           .on('end', async () => {
