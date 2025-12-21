@@ -199,16 +199,6 @@ app.get(['/health', '/api/health'], (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// ZenStream v1 Basic API stubs (to be implemented)
-app.use('/api/jobs', jobsRouter);
-app.use('/api/schedules', schedulesRouter);
-app.use('/api/sessions', sessionsRouter);
-app.use('/api/assets', assetsRouter);
-app.use('/api/destinations', destinationsRouter);
-app.use('/api/presets', presetsRouter);
-app.use('/api/history', historyRouter);
-app.use('/api/settings', settingsRouter);
-
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
     (req.path === '/setup-account' && req.method === 'POST')) {
