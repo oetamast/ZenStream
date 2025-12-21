@@ -8,8 +8,7 @@ const ensureDirectories = () => {
     path.join(dataRoot, 'assets/sfx'),
     path.join(dataRoot, 'assets/avatars'),
     path.join(dataRoot, 'thumbs'),
-    path.join(dataRoot, 'logs'),
-    path.join(dataRoot, 'db')
+    path.join(dataRoot, 'logs')
   ];
 
   dirs.forEach(dir => {

@@ -195,37 +195,9 @@ app.get('/sw.js', (req, res) => {
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
 app.use(express.json({ limit: '10gb' }));
 
-app.get(['/health', '/api/health'], async (req, res) => {
-  try {
-    await get('SELECT 1 as ok');
-    const migrationVersion = await getCurrentMigrationVersion();
-    res.status(200).json({
-      status: 'ok',
-      db: {
-        connected: true,
-        migration_version: migrationVersion
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      db: {
-        connected: false,
-        error: error.message
-      }
-    });
-  }
+app.get(['/health', '/api/health'], (req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
-
-// ZenStream v1 Basic API stubs (to be implemented)
-app.use('/api/jobs', jobsRouter);
-app.use('/api/schedules', schedulesRouter);
-app.use('/api/sessions', sessionsRouter);
-app.use('/api/assets', assetsRouter);
-app.use('/api/destinations', destinationsRouter);
-app.use('/api/presets', presetsRouter);
-app.use('/api/history', historyRouter);
-app.use('/api/settings', settingsRouter);
 
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
