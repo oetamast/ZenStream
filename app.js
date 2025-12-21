@@ -26,6 +26,14 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
+const jobsRouter = require('./routes/apiJobs');
+const schedulesRouter = require('./routes/apiSchedules');
+const sessionsRouter = require('./routes/apiSessions');
+const assetsRouter = require('./routes/apiAssets');
+const destinationsRouter = require('./routes/apiDestinations');
+const presetsRouter = require('./routes/apiPresets');
+const historyRouter = require('./routes/apiHistory');
+const settingsRouter = require('./routes/apiSettings');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('-----------------------------------');
