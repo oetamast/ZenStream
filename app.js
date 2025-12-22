@@ -201,6 +201,7 @@ app.get(['/health', '/api/health'], (req, res) => {
 
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
+    (req.path === '/setup' && req.method === 'POST') ||
     (req.path === '/setup-account' && req.method === 'POST')) {
     return next();
   }
@@ -218,6 +219,13 @@ const isAuthenticated = (req, res, next) => {
     return next();
   }
   res.redirect('/login');
+};
+
+const requireApiAuth = (req, res, next) => {
+  if (req.session && req.session.userId) {
+    return next();
+  }
+  return res.status(401).json({ error: 'auth_required' });
 };
 
 const isAdmin = async (req, res, next) => {
@@ -278,14 +286,102 @@ const loginDelayMiddleware = async (req, res, next) => {
   await new Promise(resolve => setTimeout(resolve, 1000));
   next();
 };
+app.get('/setup', async (req, res) => {
+  const installed = await isSetupComplete();
+  if (installed) {
+    return res.redirect(req.session.userId ? '/dashboard' : '/login');
+  }
+
+  const settings = await readSettings({ includeSecrets: false });
+  res.render('setup', {
+    title: 'Setup ZenStream',
+    error: null,
+    form: {
+      username: 'admin',
+      timezone: settings.timezone || 'UTC',
+      language: settings.language || 'en',
+      retention_days: settings.retention_days || 30,
+      keep_forever: !!settings.keep_forever,
+    }
+  });
+});
+
+app.post('/setup', csrfProtection, async (req, res) => {
+  try {
+    const installed = await isSetupComplete();
+    if (installed) {
+      return res.redirect('/login');
+    }
+
+    const existingAdmin = await checkIfAdminExists();
+    if (existingAdmin) {
+      markSetupComplete();
+      return res.redirect('/login');
+    }
+
+    const username = (req.body.username || 'admin').trim();
+    const password = req.body.password || '';
+    const confirmPassword = req.body.confirmPassword || '';
+    if (!username || password.length < 8 || password !== confirmPassword) {
+      return res.render('setup', {
+        title: 'Setup ZenStream',
+        error: !username
+          ? 'Username is required'
+          : password.length < 8
+            ? 'Password must be at least 8 characters'
+            : 'Passwords do not match',
+        form: {
+          username: username || 'admin',
+          timezone: req.body.timezone || 'UTC',
+          language: req.body.language || 'en',
+          retention_days: req.body.retention_days || 30,
+          keep_forever: !!req.body.keep_forever,
+        }
+      });
+    }
+
+    const retention = Math.max(1, Math.min(3650, parseInt(req.body.retention_days, 10) || 30));
+    const keepForever = req.body.keep_forever === 'on' || req.body.keep_forever === true;
+
+    await User.create({
+      username,
+      password,
+      user_role: 'admin',
+      status: 'active'
+    });
+
+    await writeSettings({
+      timezone: req.body.timezone || 'UTC',
+      language: req.body.language || 'en',
+      retention_days: retention,
+      keep_forever: keepForever ? 1 : 0,
+      setup_completed: 1,
+    });
+    markSetupComplete();
+    return res.redirect('/login');
+  } catch (err) {
+    console.error('Setup error:', err);
+    return res.render('setup', {
+      title: 'Setup ZenStream',
+      error: 'Failed to complete setup. Please try again.',
+      form: {
+        username: req.body.username || 'admin',
+        timezone: req.body.timezone || 'UTC',
+        language: req.body.language || 'en',
+        retention_days: req.body.retention_days || 30,
+        keep_forever: !!req.body.keep_forever,
+      }
+    });
+  }
+});
 app.get('/login', async (req, res) => {
   if (req.session.userId) {
     return res.redirect('/dashboard');
   }
   try {
-    const usersExist = await checkIfUsersExist();
-    if (!usersExist) {
-      return res.redirect('/setup-account');
+    const installed = await isSetupComplete();
+    if (!installed) {
+      return res.redirect('/setup');
     }
     res.render('login', {
       title: 'Login',
@@ -342,209 +438,19 @@ app.get('/logout', (req, res) => {
   res.redirect('/login');
 });
 
-app.get('/signup', async (req, res) => {
-  if (req.session.userId) {
-    return res.redirect('/dashboard');
-  }
-  try {
-    const usersExist = await checkIfUsersExist();
-    if (!usersExist) {
-      return res.redirect('/setup-account');
-    }
-    res.render('signup', {
-      title: 'Sign Up',
-      error: null,
-      success: null
-    });
-  } catch (error) {
-    console.error('Error loading signup page:', error);
-    res.render('signup', {
-      title: 'Sign Up',
-      error: 'System error. Please try again.',
-      success: null
-    });
-  }
+app.get('/signup', (_req, res) => {
+  res.redirect('/login');
 });
 
-app.post('/signup', upload.single('avatar'), async (req, res) => {
-  const { username, password, confirmPassword, user_role, status } = req.body;
-  
-  try {
-    if (!username || !password) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Username and password are required',
-        success: null
-      });
-    }
-
-    if (password !== confirmPassword) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Passwords do not match',
-        success: null
-      });
-    }
-
-    if (password.length < 6) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Password must be at least 6 characters long',
-        success: null
-      });
-    }
-
-    const existingUser = await User.findByUsername(username);
-    if (existingUser) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Username already exists',
-        success: null
-      });
-    }
-
-    let avatarPath = null;
-    if (req.file) {
-      avatarPath = `/uploads/avatars/${req.file.filename}`;
-    }
-
-    const newUser = await User.create({
-      username,
-      password,
-      avatar_path: avatarPath,
-      user_role: user_role || 'member',
-      status: status || 'inactive'
-    });
-
-    if (newUser) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: null,
-        success: 'Account created successfully! Please wait for admin approval to activate your account.'
-      });
-    } else {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Failed to create account. Please try again.',
-        success: null
-      });
-    }
-  } catch (error) {
-    console.error('Signup error:', error);
-    return res.render('signup', {
-      title: 'Sign Up',
-      error: 'An error occurred during registration. Please try again.',
-      success: null
-    });
-  }
+app.post('/signup', (_req, res) => {
+  res.status(403).render('login', {
+    title: 'Login',
+    error: 'Signup is disabled. Please log in with your administrator account.'
+  });
 });
 
-app.get('/setup-account', async (req, res) => {
-  try {
-    const usersExist = await checkIfUsersExist();
-    if (usersExist && !req.session.userId) {
-      return res.redirect('/login');
-    }
-    if (req.session.userId) {
-      const user = await User.findById(req.session.userId);
-      if (user && user.username) {
-        return res.redirect('/dashboard');
-      }
-    }
-    res.render('setup-account', {
-      title: 'Complete Your Account',
-      user: req.session.userId ? await User.findById(req.session.userId) : {},
-      error: null
-    });
-  } catch (error) {
-    console.error('Setup account error:', error);
-    res.redirect('/login');
-  }
-});
-app.post('/setup-account', upload.single('avatar'), [
-  body('username')
-    .trim()
-    .isLength({ min: 3, max: 20 })
-    .withMessage('Username must be between 3 and 20 characters')
-    .matches(/^[a-zA-Z0-9_]+$/)
-    .withMessage('Username can only contain letters, numbers, and underscores'),
-  body('password')
-    .isLength({ min: 8 })
-    .withMessage('Password must be at least 8 characters long')
-    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
-    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
-    .matches(/[0-9]/).withMessage('Password must contain at least one number'),
-  body('confirmPassword')
-    .custom((value, { req }) => value === req.body.password)
-    .withMessage('Passwords do not match')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      console.log('Validation errors:', errors.array());
-      return res.render('setup-account', {
-        title: 'Complete Your Account',
-        user: { username: req.body.username || '' },
-        error: errors.array()[0].msg
-      });
-    }
-    const existingUsername = await User.findByUsername(req.body.username);
-    if (existingUsername) {
-      return res.render('setup-account', {
-        title: 'Complete Your Account',
-        user: { email: req.body.email || '' },
-        error: 'Username is already taken'
-      });
-    }
-    const avatarPath = req.file ? `/uploads/avatars/${req.file.filename}` : null;
-    const usersExist = await checkIfUsersExist();
-    if (!usersExist) {
-      try {
-        const user = await User.create({
-          username: req.body.username,
-          password: req.body.password,
-          avatar_path: avatarPath,
-          user_role: 'admin',
-          status: 'active'
-        });
-        req.session.userId = user.id;
-        req.session.username = req.body.username;
-        req.session.user_role = user.user_role;
-        if (avatarPath) {
-          req.session.avatar_path = avatarPath;
-        }
-        console.log('Setup account - Using user ID from database:', user.id);
-        console.log('Setup account - Session userId set to:', req.session.userId);
-        return res.redirect('/dashboard');
-      } catch (error) {
-        console.error('User creation error:', error);
-        return res.render('setup-account', {
-          title: 'Complete Your Account',
-          user: {},
-          error: 'Failed to create user. Please try again.'
-        });
-      }
-    } else {
-      await User.update(req.session.userId, {
-        username: req.body.username,
-        password: req.body.password,
-        avatar_path: avatarPath,
-      });
-      req.session.username = req.body.username;
-      if (avatarPath) {
-        req.session.avatar_path = avatarPath;
-      }
-      res.redirect('/dashboard');
-    }
-  } catch (error) {
-    console.error('Account setup error:', error);
-    res.render('setup-account', {
-      title: 'Complete Your Account',
-      user: { email: req.body.email || '' },
-      error: 'An error occurred. Please try again.'
-    });
-  }
-});
+app.get('/setup-account', (_req, res) => res.redirect('/setup'));
+app.post('/setup-account', (_req, res) => res.redirect('/setup'));
 app.get('/', (req, res) => {
   res.redirect('/dashboard');
 });
@@ -2318,7 +2224,7 @@ app.put('/api/playlists/:id/videos/reorder', isAuthenticated, [
   }
 });
 
-app.get('/api/server-time', (req, res) => {
+app.get('/api/server-time', requireApiAuth, (req, res) => {
   const now = new Date();
   const day = String(now.getDate()).padStart(2, '0');
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
