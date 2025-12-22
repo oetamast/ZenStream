@@ -1,38 +1,31 @@
-const { SettingsRepository } = require('../db/repositories');
+const fs = require('fs');
+const path = require('path');
 
-const DEFAULT_SETTINGS = {
-  timezone: 'UTC',
-  language: 'en',
-  retention_days: 30,
-  keep_forever: 0
-};
+const settingsPath = path.join(__dirname, '..', 'config', 'settings.json');
 
-async function ensureSettingsRow() {
-  const existing = await SettingsRepository.read();
-  if (!existing) {
-    await SettingsRepository.write(DEFAULT_SETTINGS);
-    return DEFAULT_SETTINGS;
+function readSettings() {
+  try {
+    const raw = fs.readFileSync(settingsPath, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Failed to read settings; falling back to defaults', err);
+    return {
+      timezone: 'UTC',
+      language: 'en',
+      retention_days: 30
+    };
   }
-  return existing;
 }
 
-async function readSettings() {
-  const settings = (await ensureSettingsRow()) || DEFAULT_SETTINGS;
-  return {
-    ...DEFAULT_SETTINGS,
-    ...settings,
-    keep_forever: Boolean(settings.keep_forever)
-  };
-}
-
-async function writeSettings(newSettings) {
-  const current = await readSettings();
+function writeSettings(newSettings) {
+  const current = readSettings();
   const merged = { ...current, ...newSettings };
-  return SettingsRepository.write(merged);
+  fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2));
+  return merged;
 }
 
 module.exports = {
   readSettings,
   writeSettings,
-  DEFAULT_SETTINGS
+  settingsPath
 };

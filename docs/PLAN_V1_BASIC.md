@@ -1,7 +1,8 @@
 # ZenStream v1 Basic Recon and Plan
 
-- **Database**: SQLite stored at `/data/db/zenstream.sqlite` (ensured at startup) via `db/database.js` with a migration runner (`db/migrations/*`). Baseline tables cover legacy StreamFlow entities (`users`, `videos`, `streams`, `stream_history`, `playlists`, `playlist_videos`) plus new ZenStream v1 Basic entities (`assets`, `destinations`, `presets`, `jobs`, `schedules`, `sessions`, `events`, `log_parts`, `settings`). Legacy models in `models/` (`User.js`, `Video.js`, `Stream.js`, `Playlist.js`) still wrap direct SQL queries; new repository helpers live in `db/repositories.js`.
-- **Routes**: The Express app is defined primarily in `app.js`. It configures middleware, session, CSRF, static assets, authentication, and all existing page/API routes in one file. Stub API routers exist for upcoming ZenStream endpoints in `routes/api*.js`.
+## Current Architecture Findings
+- **Database**: Uses SQLite via `sqlite3` with file `db/streamflow.db`, initialized in `db/database.js`. Tables created: `users`, `videos`, `streams`, `stream_history`, `playlists`, and `playlist_videos`, plus session storage via `connect-sqlite3` (`db/sessions.db`). Models are small classes under `models/` (`User.js`, `Video.js`, `Stream.js`, `Playlist.js`) that wrap direct SQL queries.
+- **Routes**: The Express app is defined primarily in `app.js`. It configures middleware, session, CSRF, static assets, authentication, and all existing page/API routes in one file. There is no standalone router directory yet.
 - **Streams/Jobs Representation**: "Streams" are stored in the `streams` table and managed by `models/Stream.js`. Records include video reference, RTMP URL/key, platform metadata, bitrate/resolution/fps, loop flag, schedule time, duration, and status timestamps. Playlists are also treated as streamable sources via `video_id` pointing at a playlist.
 - **ffmpeg Usage and Lifecycle**:
   - Video analysis/thumbnail generation uses `fluent-ffmpeg` in `utils/videoProcessor.js` (driven by `@ffmpeg-installer/ffmpeg`).
@@ -19,7 +20,7 @@ The goal is to add a schedulable single-destination job model with session track
 5. **schedules**: One schedule per job (id, job_id, mode ['duration','window'], start_at, end_at nullable, duration_minutes nullable, timezone, locked boolean when <1 minute away, created_at, updated_at).
 6. **sessions**: Runtime executions (id, job_id, schedule_id nullable, status [planned/running/stopped/failed], started_at, ended_at, stop_reason, rtmp_url_cached, retry_count, created_at).
 7. **events/history**: Log user-visible events (id, job_id nullable, session_id nullable, type, message, severity, created_at, delete_after_at for retention countdown).
-8. **settings**: Singleton row stored in the DB (id=1) with timezone, language, retention_days, keep_forever, and future tier fields; surfaced through a settings service backed by `settings` table.
+8. **settings**: Single-row or JSON-backed settings (timezone, language, retention_days, tier, telegram toggles placeholder). For simplicity in stubs, stored in a JSON file now; can migrate to DB later.
 
 ### API Surface (new routes/endpoints)
 - `POST/GET/PUT/DELETE /api/assets` (upload/list/delete/search by filename, ffprobe+thumbnail analysis; enforce 500MB cap).
@@ -56,4 +57,4 @@ The goal is to add a schedulable single-destination job model with session track
 8. Localize key UI strings to English/Indonesian using existing i18n pattern.
 
 ## Settings Storage Decision
-Settings now live in the SQLite `settings` table (id=1) seeded via migrations with defaults (`timezone` UTC, `language` en, `retention_days` 30, `keep_forever` false). The `settingsService` reads/writes through the DB-backed repository.
+For stubs, settings are persisted in `config/settings.json` with keys `timezone`, `language`, and `retention_days` (default 30). A simple service will read/write this file; it can later migrate to a DB-backed settings table without changing the route contract.
