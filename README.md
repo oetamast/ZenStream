@@ -1,303 +1,107 @@
-![logo](https://github.com/user-attachments/assets/50231124-d546-43cb-9cf4-7a06a1dad5bd)
+# ZenStream
 
-# StreamFlow v2.1: Fresh From The Oven 🔥
+ZenStream is a container-first fork of the StreamFlow project that keeps the core streaming dashboard while simplifying deployment.
+FFmpeg is bundled in the image and the app exposes a lightweight health probe for infrastructure checks.
 
-StreamFlow adalah aplikasi live streaming yang memungkinkan kamu melakukan live streaming ke berbagai platform seperti YouTube, Facebook, dan platform lainnya menggunakan protokol RTMP. Aplikasi ini dapat berjalan di VPS (Virtual Private Server) dan mendukung streaming ke banyak platform secara bersamaan.
+## Quickstart
 
-![Untitled-2](https://github.com/user-attachments/assets/3d7bb367-a1b2-43a5-839b-b6aa8dd5de90)
-
-## ✨ Fitur Utama
-
-- **Multi-Platform Streaming** - Streaming ke berbagai platform populer secara bersamaan
-- **Video Gallery** - Kelola koleksi video dengan antarmuka yang intuitif
-- **Upload Video** - Upload dari local storage atau import langsung dari Google Drive
-- **Scheduled Streaming** - Jadwalkan streaming dengan pengaturan waktu yang fleksibel
-- **Advanced Settings** - Kontrol penuh untuk bitrate, resolusi, FPS, dan orientasi video
-- **Real-time Monitoring** - Monitor status streaming dengan dashboard real-time
-- **Video Analytics** - Pantau statistik dan performa video langsung dari aplikasi
-- **Responsive UI** - Antarmuka modern yang responsif di semua perangkat
-
-## 🛠️ System Requirements
-
-- **Node.js** v20 atau versi terbaru
-- **FFmpeg** untuk video processing
-- **SQLite3** (sudah termasuk dalam package)
-- **VPS/Server** dengan minimal 1 Core CPU & 1GB RAM
-- **Port** 7575 (dapat disesuaikan di file [.env](.env))
-
-## ⚡ Quick Installation
-
-Untuk instalasi otomatis, jalankan perintah berikut:
+One-command install on a fresh Ubuntu/Debian VPS:
 
 ```bash
-curl -o install.sh https://raw.githubusercontent.com/bangtutorial/streamflow/main/install.sh && chmod +x install.sh && ./install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/bangtutorial/zenstream/main/scripts/install.sh)
 ```
 
-## 🔧 Manual Installation
-
-### 1. Persiapan Server
-
-Update sistem operasi:
-```bash
-sudo apt update && sudo apt upgrade -y
-```
-
-Install Node.js:
-```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-Verifikasi instalasi Node.js:
-```bash
-node --version
-npm --version
-```
-
-Install FFmpeg:
-```bash
-sudo apt install ffmpeg -y
-```
-
-Verifikasi instalasi FFmpeg:
-```bash
-ffmpeg -version
-```
-
-Install Git:
-```bash
-sudo apt install git -y
-```
-
-### 2. Setup Project StreamFlow
-
-Clone repository:
-```bash
-git clone https://github.com/bangtutorial/streamflow
-```
-
-Masuk ke direktori project:
-```bash
-cd streamflow
-```
-
-Install Paket Node.JS:
-```bash
-npm install
-```
-
-Generate Secret Key:
-```bash
-node generate-secret.js
-```
-
-Konfigurasi port (opsional):
-```bash
-nano .env
-```
-
-Jalankan aplikasi:
-```bash
-npm run dev
-```
-
-### 3. Konfigurasi Firewall
-
-**PENTING: Buka port SSH terlebih dahulu untuk menghindari terputusnya koneksi!**
-
-Buka port SSH (biasanya port 22):
-```bash
-sudo ufw allow ssh
-# atau jika menggunakan port custom SSH
-# sudo ufw allow [PORT_SSH_ANDA]
-```
-
-Buka port aplikasi (default: 7575):
-```bash
-sudo ufw allow 7575
-```
-
-Verifikasi aturan firewall sebelum mengaktifkan:
-```bash
-sudo ufw status verbose
-```
-
-Aktifkan firewall:
-```bash
-sudo ufw enable
-```
-
-Verifikasi status firewall setelah aktif:
-```bash
-sudo ufw status
-```
-
-### 4. Install Process Manager
-
-Install PM2 untuk mengelola aplikasi:
-```bash
-sudo npm install -g pm2
-```
-
-### 5. Menjalankan Aplikasi
-
-Jalankan aplikasi dengan PM2:
-```bash
-pm2 start app.js --name streamflow
-```
-
-**Setup Auto-Restart saat Server Reboot:**
-```bash
-# Simpan konfigurasi PM2 saat ini
-pm2 save
-
-# Setup PM2 untuk auto-start saat server restart
-pm2 startup
-
-# Ikuti instruksi yang muncul, biasanya berupa command yang harus dijalankan dengan sudo
-# Contoh output: sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u username --hp /home/username
-
-# Setelah menjalankan command startup, save kembali
-pm2 save
-```
-
-**Perintah PM2 Berguna:**
-```bash
-# Lihat status aplikasi
-pm2 status
-
-# Restart aplikasi
-pm2 restart streamflow
-
-# Stop aplikasi
-pm2 stop streamflow
-
-# Lihat logs aplikasi
-pm2 logs streamflow
-
-# Monitor resource usage
-pm2 monit
-```
-
-Akses aplikasi melalui browser:
-```
-http://IP_SERVER:PORT
-```
-
-Contoh: `http://88.12.34.56:7575`
-
-
-## 🔐 Reset Password
-
-Jika lupa password atau perlu reset akun:
+If you already have the repo checked out locally:
 
 ```bash
-cd streamflow && node reset-password.js
+sudo bash scripts/install.sh
 ```
 
-## ⏰ Pengaturan Timezone Server
+The installer will:
 
-Untuk memastikan scheduled streaming berjalan dengan waktu yang akurat:
+- Install Docker + Docker Compose plugin (if missing).
+- Place ZenStream under `/opt/zenstream` by default and write a `.env` with `PORT=6969`, `DATA_DIR=/data`, and a generated secret.
+- Start the stack with `docker compose up -d --build`.
 
-### Cek timezone saat ini:
-```bash
-timedatectl status
-```
+Then open `http://<ip>:6969` to finish the setup wizard.
 
-### Lihat daftar timezone tersedia:
-```bash
-timedatectl list-timezones | grep Asia
-```
+> Secrets: set `INSTALL_SECRET` (or reuse `SESSION_SECRET`) to encrypt stored stream keys. Both values live in `.env`; the installer seeds both with the same random value.
 
-### Set timezone ke WIB (Jakarta):
-```bash
-sudo timedatectl set-timezone Asia/Jakarta
-```
+### First-run setup & login
 
-### Restart aplikasi setelah mengubah timezone:
-```bash
-pm2 restart streamflow
-```
+- On first launch, all requests redirect to `/setup` until an admin user exists.
+- Create the admin username/password plus timezone/language/retention defaults, then you will be sent to `/login`.
+- All app pages and `/api/*` (except `/api/health`) require login. Update your password later from **Settings → Security**.
 
-## 🐳 Docker Deployment
+### Web UI basics
 
-### 1. Persiapan Environment
+- **Streams**: create jobs by selecting a video asset, destination, and preset, then start via Run Now (duration or schedule window).
+- **Assets**: upload up to 500MB, view analyzed metadata and thumbnails, and trigger re-analysis when needed.
+- **Destinations**: add YouTube RTMP/RTMPS targets, store stream keys safely, and reveal keys on demand.
+- **Presets**: choose copy/remux (default) or encode (with optional codecs) for FFmpeg sessions.
+- **History**: view recent events and open FFmpeg logs per session.
 
-Buat file `.env` di root project:
-```env
-PORT=7575
-SESSION_SECRET=your_random_secret_here
-NODE_ENV=development
-```
+## Data directories
 
-### 2. Build dan Jalankan
+ZenStream writes persistent data under `/data` (overridable with `DATA_DIR`). Ensure the following paths are available to the container:
 
-```bash
-docker-compose up --build
-```
+- `/data/assets/videos`
+- `/data/assets/audios`
+- `/data/assets/sfx`
+- `/data/assets/avatars`
+- `/data/assets/thumbs`
+- `/data/logs`
 
-Akses aplikasi: [http://localhost:7575](http://localhost:7575)
+Mount a host directory to `/data` in `docker-compose.yml` to preserve uploads and logs.
 
-### 3. Data Persistence
+### Logs & retention
 
-Data akan tersimpan secara otomatis di:
-- Database: `db/`
-- Logs: `logs/`
-- Upload files: `public/uploads/`
+- History events and FFmpeg session logs live under `/data/logs` (FFmpeg logs are in `/data/logs/ffmpeg`).
+- By default, ZenStream keeps logs for **30 days** and auto-cleans on boot and every few hours.
+- Adjust retention or enable **Keep forever** from **Settings**; when enabled, countdown labels disappear in History.
 
-### 4. Reset Password (Docker)
+### Assets
 
-```bash
-docker-compose exec app node reset-password.js
-```
+- Upload up to **500MB** per file via `POST /api/assets/upload` (multipart fields: `file`, `asset_type` as `video|audio|sfx`).
+- Files are stored under `/data/assets/<type>` and analyzed automatically with `ffprobe`; thumbnails for videos are saved to `/data/assets/thumbs` and served at `/api/assets/:id/thumbnail`.
+- Search by filename only with `GET /api/assets?type=video&query=<substring>` (results are newest first).
+- Import from a public Google Drive link via `POST /api/assets/import/google-drive` (`share_url`, `asset_type`).
 
-## 🔫 Troubleshooting
+### Destinations (YouTube RTMP/RTMPS)
 
-### Permission Error
-```bash
-chmod -R 755 public/uploads/
-```
+- Create a destination via `POST /api/destinations` with `name`, `stream_url`, `stream_key` (platform defaults to `youtube`).
+- `stream_url` must start with `rtmp://` or `rtmps://`. If the URL already contains your key path, you may leave `stream_key` empty; otherwise the final publish URL is built as `<stream_url>/<stream_key>`.
+- Retrieve destinations with `GET /api/destinations` or `GET /api/destinations/:id` — responses only expose `has_stream_key` for safety.
+- Reveal the key on demand via `POST /api/destinations/:id/reveal` (intended for authenticated callers).
 
-### Port Already in Use
-```bash
-# Cek proses yang menggunakan port
-sudo lsof -i :7575
+### Presets
 
-# Kill proses jika diperlukan
-sudo kill -9 <PID>
-```
+- Manage presets with `GET/POST/PUT/DELETE /api/presets` and attach them to jobs via `preset_id`.
+- Default behavior is **remux/copy** for fast uploads with minimal CPU. Set `force_encode=true` to transcode (uses `libx264` + `aac` unless you provide specific codecs).
+- `remux_enabled` and `force_encode` are mutually exclusive; enabling encode uses more CPU — prefer remux for typical MP4 → YouTube RTMP workflows.
 
-### Database Error
-```bash
-# Reset database (PERINGATAN: akan menghapus semua data)
-rm db/*.db
+### Telegram alerts
 
-# Restart aplikasi untuk membuat database baru
-pm2 restart streamflow
-```
+- Configure from **Settings → Telegram alerts** or via `GET/PUT /api/settings`.
+- Fields: master enable, bot token (masked on load), chat ID, and per-event toggles.
+- Defaults ON: stream start/stop (manual), stream fail, retry gave up, license fail, license grace start/end. Others default OFF.
+- Test delivery with `POST /api/settings/telegram/test` (uses saved token/chat by default).
+- Setup steps: create a bot with **BotFather**, copy the token, find your chat ID (e.g., with @userinfobot or a channel’s numeric ID), paste both into Settings, save, and run the test.
 
-### Docker Troubleshooting
+### License tier (scaffolding)
 
-**Tidak bisa login:**
-- Pastikan `NODE_ENV=development` untuk akses HTTP
-- Periksa permission folder:
-  ```bash
-  sudo chmod -R 777 db/ logs/ public/uploads/
-  ```
-- Pastikan `SESSION_SECRET` tidak berubah
+- Select **Basic/Premium/Ultimate** in Settings or via `PUT /api/settings` with `license_tier`.
+- This is a local stub for development; premium/ultimate controls remain disabled until the tier is raised.
+- Retry behavior is gated: **Basic = no retry on FFmpeg failure**, **Premium/Ultimate = retry within the schedule/run window** (emitting `retry_gave_up` when the window closes).
+- Premium/Ultimate endpoints reject requests with `{ error: "requires_premium"|"requires_ultimate" }` and respond `501 Not Implemented` when the tier allows but the feature is not yet available.
 
-**Production (HTTPS):**
-- Set `NODE_ENV=production`
-- Akses melalui HTTPS untuk cookie session
+## Development notes
 
-## 💫 Contributors
+- Default port: `6969` (configurable via `PORT`).
+- Health endpoints: `/health` and `/api/health` return `200 OK` when the server is ready.
+- FFmpeg is preinstalled in the container for thumbnailing and media processing.
 
-[![Contributors](https://contrib.rocks/image?repo=bangtutorial/streamflow)](https://github.com/bangtutorial/streamflow/graphs/contributors)
+## Attribution & License
 
-## 📄 License
-
-[![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/bangtutorial/streamflow/blob/main/LICENSE)
-
----
-© 2025 - [Bang Tutorial](https://youtube.com/bangtutorial)
-
+Based on [bangtutorial/streamflow](https://github.com/bangtutorial/streamflow) (MIT).
+See [LICENSE.md](LICENSE.md) for the full license text.
