@@ -29,22 +29,15 @@
     try { return JSON.parse(raw); } catch (e) { return {}; }
   }
 
-  function renderEvent(ev, keepForever) {
+  function renderEvent(ev) {
     const meta = safeMeta(ev.metadata_json);
     const logLink = ev.session_id ? `<button class="text-blue-400 text-sm" onclick="downloadLog('${ev.session_id}')">View log</button>` : '';
-    let countdown = '';
-    if (keepForever) {
-      countdown = '<span class="text-xs text-gray-400">kept forever</span>';
-    } else if (typeof ev.delete_in_days === 'number') {
-      countdown = `<span class="text-xs text-gray-400">deletes in ${ev.delete_in_days} days</span>`;
-    }
     return `<div class="bg-dark-800 border border-gray-700 rounded-lg p-3">
       <div class="flex items-center justify-between">
         <div>
           <div class="font-semibold">${ev.event_type}</div>
           <div class="text-xs text-gray-300">${ev.message || ''}</div>
           ${meta.details ? `<div class="text-xs text-gray-400">${meta.details}</div>` : ''}
-          ${countdown ? `<div>${countdown}</div>` : ''}
         </div>
         <div class="text-xs text-gray-400">${new Date(ev.created_at).toLocaleString()}</div>
       </div>
@@ -55,9 +48,8 @@
   async function loadHistory() {
     const data = await fetchJson('/api/history?limit=50');
     const events = data.events || [];
-    const keepForever = Boolean(data.keep_forever);
     historyEmpty.classList.toggle('hidden', events.length > 0);
-    historyList.innerHTML = events.map((ev) => renderEvent(ev, keepForever)).join('');
+    historyList.innerHTML = events.map(renderEvent).join('');
   }
 
   async function downloadLog(sessionId) {
