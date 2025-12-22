@@ -551,28 +551,48 @@ app.get('/', (req, res) => {
 app.get('/dashboard', isAuthenticated, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
-    res.render('dashboard', {
-      title: 'Dashboard',
-      active: 'dashboard',
-      user: user
+    res.render('streams', {
+      title: 'Streams',
+      active: 'streams',
+      user,
     });
   } catch (error) {
     console.error('Dashboard error:', error);
     res.redirect('/login');
   }
 });
-app.get('/gallery', isAuthenticated, async (req, res) => {
+
+app.get('/streams', isAuthenticated, (_req, res) => {
+  res.redirect('/dashboard');
+});
+
+app.get('/assets', isAuthenticated, async (req, res) => {
   try {
-    const videos = await Video.findAll(req.session.userId);
-    res.render('gallery', {
-      title: 'Video Gallery',
-      active: 'gallery',
-      user: await User.findById(req.session.userId),
-      videos: videos
-    });
+    const user = await User.findById(req.session.userId);
+    res.render('assets', { title: 'Assets', active: 'assets', user });
   } catch (error) {
-    console.error('Gallery error:', error);
-    res.redirect('/dashboard');
+    console.error('Assets error:', error);
+    res.redirect('/login');
+  }
+});
+
+app.get('/destinations', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    res.render('destinations', { title: 'Destinations', active: 'destinations', user });
+  } catch (error) {
+    console.error('Destinations error:', error);
+    res.redirect('/login');
+  }
+});
+
+app.get('/presets', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    res.render('presets', { title: 'Presets', active: 'presets', user });
+  } catch (error) {
+    console.error('Presets error:', error);
+    res.redirect('/login');
   }
 });
 app.get('/settings', isAuthenticated, async (req, res) => {
@@ -594,78 +614,11 @@ app.get('/settings', isAuthenticated, async (req, res) => {
 });
 app.get('/history', isAuthenticated, async (req, res) => {
   try {
-    const db = require('./db/database').db;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const sort = req.query.sort === 'oldest' ? 'ASC' : 'DESC';
-    const platform = req.query.platform || 'all';
-    const search = req.query.search || '';
-    const offset = (page - 1) * limit;
-
-    let whereClause = 'WHERE h.user_id = ?';
-    const params = [req.session.userId];
-
-    if (platform !== 'all') {
-      whereClause += ' AND h.platform = ?';
-      params.push(platform);
-    }
-
-    if (search) {
-      whereClause += ' AND h.title LIKE ?';
-      params.push(`%${search}%`);
-    }
-
-    const totalCount = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT COUNT(*) as count FROM stream_history h ${whereClause}`,
-        params,
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row.count);
-        }
-      );
-    });
-
-    const history = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT h.*, v.thumbnail_path 
-         FROM stream_history h 
-         LEFT JOIN videos v ON h.video_id = v.id 
-         ${whereClause}
-         ORDER BY h.start_time ${sort}
-         LIMIT ? OFFSET ?`,
-        [...params, limit, offset],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
-
-    const totalPages = Math.ceil(totalCount / limit);
-
-    res.render('history', {
-      active: 'history',
-      title: 'Stream History',
-      history: history,
-      helpers: app.locals.helpers,
-      pagination: {
-        page,
-        limit,
-        totalCount,
-        totalPages,
-        sort: req.query.sort || 'newest',
-        platform,
-        search
-      }
-    });
+    const user = await User.findById(req.session.userId);
+    res.render('history', { title: 'History', active: 'history', user });
   } catch (error) {
-    console.error('Error fetching stream history:', error);
-    res.status(500).render('error', {
-      title: 'Error',
-      message: 'Failed to load stream history',
-      error: error
-    });
+    console.error('History error:', error);
+    res.redirect('/dashboard');
   }
 });
 app.delete('/api/history/:id', isAuthenticated, async (req, res) => {
