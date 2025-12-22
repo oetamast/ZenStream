@@ -13,9 +13,6 @@ const {
 const { recordEvent } = require('./eventService');
 const { refreshJobStatus } = require('./jobStatusService');
 const { paths } = require('../utils/storage');
-const { decryptSecret } = require('../utils/crypto');
-const { buildRtmpTarget } = require('./destinationService');
-const { readSettings } = require('./settingsService');
 
 const running = new Map(); // session_id -> state
 const retryTracker = new Map(); // session_id -> { count, nextAttempt, firstFailureAt }
@@ -24,17 +21,6 @@ const OPEN_ENDED_RETRY_MINUTES = 30;
 const POLL_INTERVAL_MS = 3000;
 let loopHandle = null;
 let ticking = false;
-
-function maskTarget(target, key) {
-  if (!target) return '';
-  if (key) return target.replace(key, '***');
-  const parts = target.split('/');
-  if (parts.length > 3) {
-    parts[parts.length - 1] = '***';
-    return parts.join('/');
-  }
-  return target;
-}
 
 function parseAssetDurationSeconds(asset) {
   if (!asset || !asset.metadata_json) return null;
@@ -68,6 +54,15 @@ function getDiskFreeMegabytes() {
   }
 }
 
+function buildTargetUrl(destination) {
+  const base = destination.stream_url.replace(/\/$/, '');
+  const key = destination.stream_key_enc.replace(/^\//, '');
+  if (destination.stream_url.includes(key)) {
+    return destination.stream_url;
+  }
+  return `${base}/${key}`;
+}
+
 function buildLoopArgs(job, assetDuration, preset) {
   const args = ['-re'];
   if (job.loop_enabled) {
@@ -88,29 +83,25 @@ function buildFilterComplex(job, assetDuration) {
   return { videoFade, audioFade };
 }
 
-function buildCodecArgs(preset, hasFilter) {
-  if (hasFilter || preset?.force_encode) {
-    const videoCodec = preset?.video_codec || 'libx264';
-    const audioCodec = preset?.audio_codec || 'aac';
-    const args = ['-c:v', videoCodec];
-    if (!preset?.video_codec || videoCodec === 'libx264') {
-      args.push('-preset', 'veryfast', '-pix_fmt', 'yuv420p');
-    }
-    args.push('-c:a', audioCodec);
-    return args;
-  }
-  return ['-c:v', 'copy', '-c:a', 'copy'];
-}
-
 async function buildFfmpegArgs(job, asset, destination, preset) {
   const inputPath = asset.path;
-  const target = buildRtmpTarget(destination.stream_url, destination._stream_key_plain || '');
+  const target = buildTargetUrl(destination);
   const assetDuration = parseAssetDurationSeconds(asset);
   const loopArgs = buildLoopArgs(job, assetDuration, preset);
   const filter = buildFilterComplex(job, assetDuration);
   const args = ['-nostdin', ...loopArgs, '-i', inputPath];
 
-  args.push(...buildCodecArgs(preset, !!filter));
+  if (preset?.force_encode) {
+    args.push(
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '128k'
+    );
+  } else {
+    args.push('-c:v', 'copy', '-c:a', 'aac');
+  }
 
   if (filter) {
     args.push('-vf', filter.videoFade, '-af', filter.audioFade);
@@ -139,7 +130,6 @@ async function markSessionFailed(session, message) {
     message: message || 'Session failed',
     job_id: session.job_id,
     session_id: session.id,
-    metadata: { error: message },
   });
   await refreshJobStatus(session.job_id);
 }
@@ -164,7 +154,6 @@ async function stopSessionProcess(session, reason = 'stopped') {
     message: `Session stopped (${reason})`,
     job_id: session.job_id,
     session_id: session.id,
-    metadata: { reason },
   });
   await refreshJobStatus(session.job_id);
   retryTracker.delete(session.id);
@@ -192,7 +181,6 @@ async function handleExit(session, code, signal, state) {
       message: `Session stopped (${state.stopReason || 'stopped'})`,
       job_id: session.job_id,
       session_id: session.id,
-      metadata: { reason: state.stopReason || 'stopped' },
     });
     await refreshJobStatus(session.job_id);
     retryTracker.delete(session.id);
@@ -206,7 +194,6 @@ async function handleExit(session, code, signal, state) {
       message: 'Session completed',
       job_id: session.job_id,
       session_id: session.id,
-      metadata: { reason: 'natural_end' },
     });
     await refreshJobStatus(session.job_id);
     retryTracker.delete(session.id);
@@ -264,31 +251,6 @@ async function startFfmpeg(session) {
     await markSessionFailed(session, 'Destination missing');
     return;
   }
-  if (!/^rtmps?:\/\//i.test(destination.stream_url || '')) {
-    await recordEvent({
-      event_type: 'session_blocked',
-      message: 'Destination URL invalid',
-      job_id: job.id,
-      session_id: session.id,
-    });
-    await JobsRepository.updateStatus(job.id, 'invalid', 'Destination URL invalid');
-    await markSessionFailed(session, 'Destination URL invalid');
-    return;
-  }
-  let streamKeyPlain = '';
-  try {
-    streamKeyPlain = decryptSecret(destination.stream_key_enc || '');
-  } catch (err) {
-    await recordEvent({
-      event_type: 'session_blocked',
-      message: 'Destination key could not be decrypted',
-      job_id: job.id,
-      session_id: session.id,
-    });
-    await JobsRepository.updateStatus(job.id, 'invalid', 'Destination key invalid');
-    await markSessionFailed(session, 'Destination key invalid');
-    return;
-  }
   const existingRunning = await SessionsRepository.findRunningByJob(job.id);
   if (existingRunning && existingRunning.id !== session.id) {
     await recordEvent({
@@ -329,20 +291,7 @@ async function startFfmpeg(session) {
     return;
   }
 
-  destination._stream_key_plain = streamKeyPlain;
   const preset = job.preset_id ? await PresetsRepository.findById(job.preset_id) : null;
-  const settings = await readSettings();
-
-  if (settings.safety_cap_enabled && settings.benchmark_profile && preset?.force_encode) {
-    await recordEvent({
-      event_type: 'safety_cap_warning',
-      message: `Force encode requested under safety profile ${settings.benchmark_profile}`,
-      job_id: job.id,
-      session_id: session.id,
-      metadata: { benchmark_profile: settings.benchmark_profile },
-    });
-  }
-
   const ffmpegArgs = await buildFfmpegArgs(job, asset, destination, preset);
   const logDir = ensureFfmpegLogDir();
   const logPath = path.join(logDir, `session_${session.id}.log`);
@@ -374,10 +323,7 @@ async function startFfmpeg(session) {
     job_id: job.id,
     session_id: session.id,
     metadata: {
-      target: maskTarget(
-        buildRtmpTarget(destination.stream_url, destination._stream_key_plain || ''),
-        destination._stream_key_plain || ''
-      ),
+      target: buildTargetUrl(destination).replace(destination.stream_key_enc, '***'),
       loop_enabled: !!job.loop_enabled,
       preset: preset?.name || null,
     }
