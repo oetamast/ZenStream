@@ -14,10 +14,10 @@ const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const User = require('./models/User');
-const { db, checkIfUsersExist, initializeDatabase } = require('./db/database');
+const { db, checkIfUsersExist, initializeDatabase, getCurrentMigrationVersion, get } = require('./db/database');
 const systemMonitor = require('./services/systemMonitor');
 const { uploadVideo, upload } = require('./middleware/uploadMiddleware');
-const { ensureDirectories } = require('./utils/storage');
+const { ensureDirectories, paths } = require('./utils/storage');
 const { getVideoInfo, generateThumbnail } = require('./utils/videoProcessor');
 const Video = require('./models/Video');
 const Playlist = require('./models/Playlist');
@@ -26,6 +26,18 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
+const { stopAllSessions } = require('./services/jobService');
+const { startScheduler } = require('./services/jobScheduler');
+const { startRunner } = require('./services/runnerService');
+const { startRetentionCleanup } = require('./services/retentionService');
+const jobsRouter = require('./routes/apiJobs');
+const schedulesRouter = require('./routes/apiSchedules');
+const sessionsRouter = require('./routes/apiSessions');
+const assetsRouter = require('./routes/apiAssets');
+const destinationsRouter = require('./routes/apiDestinations');
+const presetsRouter = require('./routes/apiPresets');
+const historyRouter = require('./routes/apiHistory');
+const settingsRouter = require('./routes/apiSettings');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('-----------------------------------');
@@ -40,9 +52,8 @@ process.on('uncaughtException', (error) => {
 });
 const app = express();
 app.set("trust proxy", 1);
-const port = process.env.PORT || 7575;
+const port = process.env.PORT || 6969;
 const tokens = new csrf();
-ensureDirectories();
 ensureDirectories();
 app.locals.helpers = {
   getUsername: function (req) {
@@ -157,20 +168,77 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Service-Worker-Allowed', '/');
-  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
-});
-
 app.use('/uploads', function (req, res, next) {
   res.header('Cache-Control', 'no-cache');
   res.header('Pragma', 'no-cache');
   res.header('Expires', '0');
   next();
 });
+
+app.use('/uploads/avatars', express.static(paths.avatars, {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    let contentType = 'application/octet-stream';
+    if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+    else if (ext === '.png') contentType = 'image/png';
+    else if (ext === '.gif') contentType = 'image/gif';
+    res.header('Content-Type', contentType);
+    res.header('Cache-Control', 'max-age=60, must-revalidate');
+  }
+}));
+
+app.use('/uploads/videos', express.static(paths.videos));
+app.use('/uploads/thumbnails', express.static(paths.thumbnails));
+
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
 app.use(express.json({ limit: '10gb' }));
+
+app.get(['/health', '/api/health'], async (req, res) => {
+  try {
+    await get('SELECT 1 as ok');
+    const migrationVersion = await getCurrentMigrationVersion();
+    res.status(200).json({
+      status: 'ok',
+      db: {
+        connected: true,
+        migration_version: migrationVersion
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      db: {
+        connected: false,
+        error: error.message
+      }
+    });
+  }
+});
+
+app.post('/api/stop-all', async (_req, res) => {
+  try {
+    const stopped = await stopAllSessions();
+    res.json({ stopped });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ZenStream v1 Basic APIs
+app.use('/api/jobs', jobsRouter);
+app.use('/api/schedules', schedulesRouter);
+app.use('/api/sessions', sessionsRouter);
+app.use('/api/assets', assetsRouter);
+app.use('/api/destinations', destinationsRouter);
+app.use('/api/presets', presetsRouter);
+app.use('/api/history', historyRouter);
+app.use('/api/settings', settingsRouter);
 
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
@@ -524,28 +592,48 @@ app.get('/', (req, res) => {
 app.get('/dashboard', isAuthenticated, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
-    res.render('dashboard', {
-      title: 'Dashboard',
-      active: 'dashboard',
-      user: user
+    res.render('streams', {
+      title: 'Streams',
+      active: 'streams',
+      user,
     });
   } catch (error) {
     console.error('Dashboard error:', error);
     res.redirect('/login');
   }
 });
-app.get('/gallery', isAuthenticated, async (req, res) => {
+
+app.get('/streams', isAuthenticated, (_req, res) => {
+  res.redirect('/dashboard');
+});
+
+app.get('/assets', isAuthenticated, async (req, res) => {
   try {
-    const videos = await Video.findAll(req.session.userId);
-    res.render('gallery', {
-      title: 'Video Gallery',
-      active: 'gallery',
-      user: await User.findById(req.session.userId),
-      videos: videos
-    });
+    const user = await User.findById(req.session.userId);
+    res.render('assets', { title: 'Assets', active: 'assets', user });
   } catch (error) {
-    console.error('Gallery error:', error);
-    res.redirect('/dashboard');
+    console.error('Assets error:', error);
+    res.redirect('/login');
+  }
+});
+
+app.get('/destinations', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    res.render('destinations', { title: 'Destinations', active: 'destinations', user });
+  } catch (error) {
+    console.error('Destinations error:', error);
+    res.redirect('/login');
+  }
+});
+
+app.get('/presets', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    res.render('presets', { title: 'Presets', active: 'presets', user });
+  } catch (error) {
+    console.error('Presets error:', error);
+    res.redirect('/login');
   }
 });
 app.get('/settings', isAuthenticated, async (req, res) => {
@@ -567,78 +655,11 @@ app.get('/settings', isAuthenticated, async (req, res) => {
 });
 app.get('/history', isAuthenticated, async (req, res) => {
   try {
-    const db = require('./db/database').db;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const sort = req.query.sort === 'oldest' ? 'ASC' : 'DESC';
-    const platform = req.query.platform || 'all';
-    const search = req.query.search || '';
-    const offset = (page - 1) * limit;
-
-    let whereClause = 'WHERE h.user_id = ?';
-    const params = [req.session.userId];
-
-    if (platform !== 'all') {
-      whereClause += ' AND h.platform = ?';
-      params.push(platform);
-    }
-
-    if (search) {
-      whereClause += ' AND h.title LIKE ?';
-      params.push(`%${search}%`);
-    }
-
-    const totalCount = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT COUNT(*) as count FROM stream_history h ${whereClause}`,
-        params,
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row.count);
-        }
-      );
-    });
-
-    const history = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT h.*, v.thumbnail_path 
-         FROM stream_history h 
-         LEFT JOIN videos v ON h.video_id = v.id 
-         ${whereClause}
-         ORDER BY h.start_time ${sort}
-         LIMIT ? OFFSET ?`,
-        [...params, limit, offset],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
-
-    const totalPages = Math.ceil(totalCount / limit);
-
-    res.render('history', {
-      active: 'history',
-      title: 'Stream History',
-      history: history,
-      helpers: app.locals.helpers,
-      pagination: {
-        page,
-        limit,
-        totalCount,
-        totalPages,
-        sort: req.query.sort || 'newest',
-        platform,
-        search
-      }
-    });
+    const user = await User.findById(req.session.userId);
+    res.render('history', { title: 'History', active: 'history', user });
   } catch (error) {
-    console.error('Error fetching stream history:', error);
-    res.status(500).render('error', {
-      title: 'Error',
-      message: 'Failed to load stream history',
-      error: error
-    });
+    console.error('History error:', error);
+    res.redirect('/dashboard');
   }
 });
 app.delete('/api/history/:id', isAuthenticated, async (req, res) => {
@@ -1349,12 +1370,11 @@ app.post('/api/videos/upload', isAuthenticated, (req, res, next) => {
         }
         const thumbnailFilename = `thumb-${path.parse(req.file.filename).name}.jpg`;
         const thumbnailPath = `/uploads/thumbnails/${thumbnailFilename}`;
-        const fullThumbnailPath = path.join(__dirname, 'public', thumbnailPath);
         ffmpeg(fullFilePath)
           .screenshots({
             timestamps: ['10%'],
             filename: thumbnailFilename,
-            folder: path.join(__dirname, 'public', 'uploads', 'thumbnails'),
+            folder: paths.thumbnails,
             size: '854x480'
           })
           .on('end', async () => {
@@ -2354,42 +2374,61 @@ app.get('/api/server-time', (req, res) => {
     formattedTime: formattedTime
   });
 });
-const server = app.listen(port, '0.0.0.0', async () => {
+
+let server;
+async function startServer() {
   try {
     await initializeDatabase();
+    server = app.listen(port, '0.0.0.0', async () => {
+      const ipAddresses = getLocalIpAddresses();
+      console.log(`StreamFlow running at:`);
+      if (ipAddresses && ipAddresses.length > 0) {
+        ipAddresses.forEach(ip => {
+          console.log(`  http://${ip}:${port}`);
+        });
+      } else {
+        console.log(`  http://localhost:${port}`);
+      }
+      try {
+        const streams = await Stream.findAll(null, 'live');
+        if (streams && streams.length > 0) {
+          console.log(`Resetting ${streams.length} live streams to offline state...`);
+          for (const stream of streams) {
+            await Stream.updateStatus(stream.id, 'offline');
+          }
+        }
+      } catch (error) {
+        console.error('Error resetting stream statuses:', error);
+      }
+      schedulerService.init(streamingService);
+      try {
+        await streamingService.syncStreamStatuses();
+      } catch (error) {
+        console.error('Failed to sync stream statuses:', error);
+      }
+      try {
+        await startScheduler();
+      } catch (error) {
+        console.error('Failed to start basic scheduler:', error);
+      }
+      try {
+        await startRunner();
+      } catch (error) {
+        console.error('Failed to start runner:', error);
+      }
+      try {
+        await startRetentionCleanup();
+      } catch (error) {
+        console.error('Failed to start retention cleanup:', error);
+      }
+    });
+    server.timeout = 30 * 60 * 1000;
+    server.keepAliveTimeout = 30 * 60 * 1000;
+    server.headersTimeout = 30 * 60 * 1000;
   } catch (error) {
     console.error('Failed to initialize database:', error);
     process.exit(1);
   }
-  
-  const ipAddresses = getLocalIpAddresses();
-  console.log(`StreamFlow running at:`);
-  if (ipAddresses && ipAddresses.length > 0) {
-    ipAddresses.forEach(ip => {
-      console.log(`  http://${ip}:${port}`);
-    });
-  } else {
-    console.log(`  http://localhost:${port}`);
-  }
-  try {
-    const streams = await Stream.findAll(null, 'live');
-    if (streams && streams.length > 0) {
-      console.log(`Resetting ${streams.length} live streams to offline state...`);
-      for (const stream of streams) {
-        await Stream.updateStatus(stream.id, 'offline');
-      }
-    }
-  } catch (error) {
-    console.error('Error resetting stream statuses:', error);
-  }
-  schedulerService.init(streamingService);
-  try {
-    await streamingService.syncStreamStatuses();
-  } catch (error) {
-    console.error('Failed to sync stream statuses:', error);
-  }
-});
+}
 
-server.timeout = 30 * 60 * 1000;
-server.keepAliveTimeout = 30 * 60 * 1000;
-server.headersTimeout = 30 * 60 * 1000;
+startServer();

@@ -1,11 +1,18 @@
 const fs = require('fs-extra');
 const path = require('path');
+const dataRoot = process.env.DATA_DIR || '/data';
 const ensureDirectories = () => {
   const dirs = [
-    path.join(__dirname, '../public/uploads/videos'),
-    path.join(__dirname, '../public/uploads/thumbnails'),
-    path.join(__dirname, '../public/uploads/avatars')
+    path.join(dataRoot, 'assets/videos'),
+    path.join(dataRoot, 'assets/audios'),
+    path.join(dataRoot, 'assets/sfx'),
+    path.join(dataRoot, 'assets/avatars'),
+    path.join(dataRoot, 'assets/thumbs'),
+    path.join(dataRoot, 'logs'),
+    path.join(dataRoot, 'logs/ffmpeg'),
+    path.join(dataRoot, 'db')
   ];
+
   dirs.forEach(dir => {
     fs.ensureDirSync(dir);
   });
@@ -23,8 +30,12 @@ module.exports = {
   ensureDirectories,
   getUniqueFilename,
   paths: {
-    videos: path.join(__dirname, '../public/uploads/videos'),
-    thumbnails: path.join(__dirname, '../public/uploads/thumbnails'),
-    avatars: path.join(__dirname, '../public/uploads/avatars')
-  }
+    videos: path.join(dataRoot, 'assets/videos'),
+    thumbnails: path.join(dataRoot, 'assets/thumbs'),
+    avatars: path.join(dataRoot, 'assets/avatars'),
+    audios: path.join(dataRoot, 'assets/audios'),
+    sfx: path.join(dataRoot, 'assets/sfx'),
+    logs: path.join(dataRoot, 'logs')
+  },
+  dataRoot
 };
