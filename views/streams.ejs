@@ -1,0 +1,317 @@
+<% layout('layout') -%>
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Streams</h1>
+    <p class="text-gray-400 text-sm">Link an asset, destination, and preset to start streaming.</p>
+  </div>
+  <div class="flex items-center gap-3">
+    <button id="stopAllBtn" class="hidden bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded">Stop all streams</button>
+    <button id="openJobForm" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">New Stream</button>
+  </div>
+</div>
+
+<div class="flex gap-2 mb-4" id="statusFilters">
+  <button data-filter="all" class="filter-btn bg-primary text-white px-3 py-1 rounded">All</button>
+  <button data-filter="running" class="filter-btn bg-dark-700 text-white px-3 py-1 rounded">Running</button>
+  <button data-filter="planned" class="filter-btn bg-dark-700 text-white px-3 py-1 rounded">Planned</button>
+  <button data-filter="stopped" class="filter-btn bg-dark-700 text-white px-3 py-1 rounded">Stopped</button>
+  <button data-filter="fix_required" class="filter-btn bg-dark-700 text-white px-3 py-1 rounded">Fix required</button>
+</div>
+
+<div id="jobForm" class="hidden bg-dark-800 border border-gray-700 p-4 rounded-lg mb-6">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="font-semibold">Create Stream</h2>
+    <button id="closeJobForm" class="text-gray-400 hover:text-white"><i class="ti ti-x"></i></button>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm mb-1">Name</label>
+      <input id="jobName" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="My stream" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Video Asset</label>
+      <select id="jobAsset" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2"></select>
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Destination</label>
+      <select id="jobDestination" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2"></select>
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Preset</label>
+      <select id="jobPreset" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2"></select>
+    </div>
+    <div>
+      <label class="inline-flex items-center gap-2 text-sm">
+        <input id="jobLoop" type="checkbox" class="accent-primary" />
+        Loop (required for open-ended)
+      </label>
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Crossfade seconds (loop only)</label>
+      <input id="jobCrossfade" type="number" min="0" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+    </div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4 mt-3">
+    <div class="p-3 rounded border border-gray-700 bg-dark-800/50">
+      <h3 class="font-semibold text-sm">Premium-only</h3>
+      <p class="text-xs text-gray-500 mb-2">Audio replace, auto-recovery, and hot swap are coming soon. Requires Premium.</p>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Audio replace (Coming soon)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Auto-recovery (Coming soon)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Hot swap (Coming soon)</span>
+      </label>
+    </div>
+    <div class="p-3 rounded border border-gray-700 bg-dark-800/50">
+      <h3 class="font-semibold text-sm">Ultimate-only</h3>
+      <p class="text-xs text-gray-500 mb-2">Scenes and recurring swap rules will unlock with Ultimate.</p>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Scenes (Coming soon)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Recurring swap rules (Coming soon)</span>
+      </label>
+    </div>
+  </div>
+  <div class="mt-4 flex justify-end gap-3">
+    <button id="saveJob" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Create</button>
+  </div>
+  <p id="jobFormError" class="text-red-400 text-sm mt-2 hidden"></p>
+</div>
+
+<div id="jobsEmpty" class="hidden text-gray-400 text-sm">No streams yet. Create one to get started.</div>
+<div id="jobsList" class="space-y-3"></div>
+
+<div id="runModal" class="hidden fixed inset-0 bg-black/70 z-40 items-center justify-center p-4">
+  <div class="bg-dark-800 border border-gray-700 rounded-lg w-full max-w-xl p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-lg font-semibold">Run stream</h3>
+      <button id="closeRunModal" class="text-gray-400 hover:text-white"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="space-y-3">
+      <input type="hidden" id="runJobId" />
+      <div>
+        <label class="block text-sm mb-1">Mode</label>
+        <select id="runMode" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2">
+          <option value="duration">Run now (duration minutes)</option>
+          <option value="window">Schedule window</option>
+        </select>
+      </div>
+      <div id="durationFields" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm mb-1">Duration minutes (optional)</label>
+          <input id="runDuration" type="number" min="1" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">End at (optional ISO)</label>
+          <input id="runEndAt" type="datetime-local" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+        </div>
+      </div>
+      <div id="windowFields" class="hidden grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm mb-1">Start at</label>
+          <input id="runStartAt" type="datetime-local" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm mb-1">End at (optional)</label>
+          <input id="runWindowEndAt" type="datetime-local" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+        </div>
+      </div>
+      <p class="text-sm text-gray-400">Open-ended requires Loop enabled on the job.</p>
+      <p id="runError" class="text-red-400 text-sm hidden"></p>
+    </div>
+    <div class="mt-4 flex justify-end gap-3">
+      <button id="submitRun" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Start</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const jobsList = document.getElementById('jobsList');
+  const jobsEmpty = document.getElementById('jobsEmpty');
+  const jobForm = document.getElementById('jobForm');
+  const jobFormError = document.getElementById('jobFormError');
+  const stopAllBtn = document.getElementById('stopAllBtn');
+  const runModal = document.getElementById('runModal');
+  const runMode = document.getElementById('runMode');
+  const runError = document.getElementById('runError');
+  let selectedFilter = 'all';
+  let jobsCache = [];
+  let editingJobId = null;
+
+  document.getElementById('openJobForm').onclick = () => {
+    editingJobId = null;
+    document.getElementById('saveJob').textContent = 'Create';
+    jobForm.classList.remove('hidden');
+  };
+  document.getElementById('closeJobForm').onclick = () => jobForm.classList.add('hidden');
+  document.getElementById('closeRunModal').onclick = () => { runModal.classList.add('hidden'); runError.classList.add('hidden'); };
+  runMode.onchange = () => toggleRunMode();
+  document.querySelectorAll('#statusFilters .filter-btn').forEach((btn) => {
+    btn.onclick = () => {
+      selectedFilter = btn.dataset.filter;
+      document.querySelectorAll('#statusFilters .filter-btn').forEach((b) => b.classList.remove('bg-primary'));
+      document.querySelector(`#statusFilters [data-filter="${selectedFilter}"]`).classList.add('bg-primary');
+      loadJobs();
+    };
+  });
+
+  async function fetchJson(url, options) {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.message || 'Request failed');
+    }
+    return res.json();
+  }
+
+  function toggleRunMode() {
+    const mode = runMode.value;
+    document.getElementById('durationFields').classList.toggle('hidden', mode !== 'duration');
+    document.getElementById('windowFields').classList.toggle('hidden', mode !== 'window');
+  }
+
+  async function loadSelects() {
+    const assets = (await fetchJson('/api/assets?type=video')).assets || [];
+    const destinations = (await fetchJson('/api/destinations')).destinations || [];
+    const presets = (await fetchJson('/api/presets')).presets || [];
+    const assetSelect = document.getElementById('jobAsset');
+    const destSelect = document.getElementById('jobDestination');
+    const presetSelect = document.getElementById('jobPreset');
+    assetSelect.innerHTML = assets.map((a) => `<option value="${a.id}">${a.filename}</option>`).join('');
+    destSelect.innerHTML = destinations.map((d) => `<option value="${d.id}">${d.name}</option>`).join('');
+    presetSelect.innerHTML = `<option value="">Default (Copy/Remux)</option>` + presets.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+  }
+
+  async function loadJobs() {
+    const url = selectedFilter === 'fix_required' ? '/api/jobs?filter=fix_required' : '/api/jobs';
+    const data = await fetchJson(url);
+    jobsCache = data.jobs || [];
+    const filtered = jobsCache.filter((job) => {
+      if (selectedFilter === 'running') return job.current_session?.status === 'running';
+      if (selectedFilter === 'planned') return job.status === 'planned';
+      if (selectedFilter === 'stopped') return job.status === 'stopped';
+      if (selectedFilter === 'fix_required') return job.status === 'invalid' || job.enabled === false;
+      return true;
+    });
+    jobsEmpty.classList.toggle('hidden', filtered.length > 0 ? true : false);
+    stopAllBtn.classList.toggle('hidden', !filtered.concat(jobsCache).some((j) => j.current_session && j.current_session.status === 'running'));
+    jobsList.innerHTML = filtered.map(renderJobCard).join('');
+  }
+
+  function renderJobCard(job) {
+    const session = job.current_session;
+    const status = session?.status === 'running' ? 'running' : job.status;
+    const runDisabled = status === 'invalid' || job.enabled === false;
+    const invalidTag = job.invalid_reason ? `<span class="text-xs text-red-300 ml-2">Fix required: ${job.invalid_reason}</span>` : '';
+    return `<div class="bg-dark-800 border border-gray-700 rounded-lg p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-semibold">${job.name}${invalidTag}</div>
+          <div class="text-xs text-gray-400">Asset: ${job.asset?.filename || 'N/A'} | Destination: ${job.destination?.name || 'N/A'} | Preset: ${job.preset?.name || 'Default'}</div>
+        </div>
+        <span class="text-sm px-2 py-1 rounded ${status === 'running' ? 'bg-green-700' : 'bg-gray-700'}">${status}</span>
+      </div>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <button class="${runDisabled ? 'bg-gray-600 cursor-not-allowed' : 'bg-primary hover:bg-blue-600'} text-white px-3 py-1 rounded" ${runDisabled ? 'disabled title="Fix required before running"' : ''} onclick="${runDisabled ? '' : `openRun('${job.id}')`}">Run now</button>
+        <button class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded" onclick="stopJob('${job.id}')">Stop</button>
+        ${runDisabled ? `<button class="bg-amber-600 hover:bg-amber-500 text-white px-3 py-1 rounded" onclick="editJob('${job.id}')">Fix</button>` : ''}
+      </div>
+      ${session ? `<div class="text-xs text-gray-400 mt-2">Current session: ${session.id} (${session.status})</div>` : ''}
+    </div>`;
+  }
+
+  async function createJob() {
+    jobFormError.classList.add('hidden');
+    const body = {
+      name: document.getElementById('jobName').value,
+      video_asset_id: document.getElementById('jobAsset').value,
+      destination_id: document.getElementById('jobDestination').value,
+      preset_id: document.getElementById('jobPreset').value || null,
+      loop_enabled: document.getElementById('jobLoop').checked,
+      crossfade_seconds: document.getElementById('jobCrossfade').value || null,
+    };
+    try {
+      const url = editingJobId ? `/api/jobs/${editingJobId}` : '/api/jobs';
+      const method = editingJobId ? 'PATCH' : 'POST';
+      await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      jobForm.classList.add('hidden');
+      editingJobId = null;
+      document.getElementById('saveJob').textContent = 'Create';
+      await loadJobs();
+    } catch (err) {
+      jobFormError.textContent = err.message;
+      jobFormError.classList.remove('hidden');
+    }
+  }
+  document.getElementById('saveJob').onclick = createJob;
+
+  function editJob(id) {
+    const job = jobsCache.find((j) => j.id === id);
+    if (!job) return;
+    editingJobId = id;
+    document.getElementById('jobName').value = job.name || '';
+    document.getElementById('jobAsset').value = job.video_asset_id;
+    document.getElementById('jobDestination').value = job.destination_id;
+    document.getElementById('jobPreset').value = job.preset_id || '';
+    document.getElementById('jobLoop').checked = !!job.loop_enabled;
+    document.getElementById('jobCrossfade').value = job.crossfade_seconds || '';
+    document.getElementById('saveJob').textContent = 'Update';
+    jobForm.classList.remove('hidden');
+  }
+
+  function openRun(id) {
+    document.getElementById('runJobId').value = id;
+    runModal.classList.remove('hidden');
+  }
+
+  async function submitRun() {
+    runError.classList.add('hidden');
+    const id = document.getElementById('runJobId').value;
+    const mode = runMode.value;
+    const body = {};
+    if (mode === 'duration') {
+      if (document.getElementById('runDuration').value) body.duration_minutes = Number(document.getElementById('runDuration').value);
+      if (document.getElementById('runEndAt').value) body.end_at = document.getElementById('runEndAt').value;
+    } else {
+      body.start_at = document.getElementById('runStartAt').value;
+      body.end_at = document.getElementById('runWindowEndAt').value || null;
+    }
+    try {
+      await fetchJson(`/api/jobs/${id}/run-now`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      runModal.classList.add('hidden');
+      await loadJobs();
+    } catch (err) {
+      const runError = document.getElementById('runError');
+      runError.textContent = err.message;
+      runError.classList.remove('hidden');
+    }
+  }
+  document.getElementById('submitRun').onclick = submitRun;
+
+  async function stopJob(id) {
+    if (!confirm('Stop this stream?')) return;
+    await fetchJson(`/api/jobs/${id}/stop`, { method: 'POST' });
+    await loadJobs();
+  }
+
+  stopAllBtn.onclick = async () => {
+    if (!confirm('Stop all running streams?')) return;
+    await fetchJson('/api/sessions/stop-all', { method: 'POST' });
+    await loadJobs();
+  };
+
+  (async function init() {
+    toggleRunMode();
+    await loadSelects();
+    await loadJobs();
+  })();
+</script>
