@@ -21,17 +21,10 @@ ZenStream writes persistent data under `/data` (overridable with `DATA_DIR`). En
 - `/data/assets/audios`
 - `/data/assets/sfx`
 - `/data/assets/avatars`
-- `/data/assets/thumbs`
+- `/data/thumbs`
 - `/data/logs`
 
 Mount a host directory to `/data` in `docker-compose.yml` to preserve uploads and logs.
-
-### Assets
-
-- Upload up to **500MB** per file via `POST /api/assets/upload` (multipart fields: `file`, `asset_type` as `video|audio|sfx`).
-- Files are stored under `/data/assets/<type>` and analyzed automatically with `ffprobe`; thumbnails for videos are saved to `/data/assets/thumbs` and served at `/api/assets/:id/thumbnail`.
-- Search by filename only with `GET /api/assets?type=video&query=<substring>` (results are newest first).
-- Import from a public Google Drive link via `POST /api/assets/import/google-drive` (`share_url`, `asset_type`).
 
 ## Development notes
 
