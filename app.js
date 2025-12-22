@@ -14,7 +14,7 @@ const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const User = require('./models/User');
-const { db, checkIfAdminExists, initializeDatabase, getCurrentMigrationVersion, get } = require('./db/database');
+const { db, checkIfUsersExist, initializeDatabase, getCurrentMigrationVersion, get } = require('./db/database');
 const systemMonitor = require('./services/systemMonitor');
 const { uploadVideo, upload } = require('./middleware/uploadMiddleware');
 const { ensureDirectories, paths } = require('./utils/storage');
@@ -26,11 +26,6 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
-const { stopAllSessions } = require('./services/jobService');
-const { startScheduler } = require('./services/jobScheduler');
-const { startRunner } = require('./services/runnerService');
-const { startRetentionCleanup } = require('./services/retentionService');
-const { readSettings, writeSettings } = require('./services/settingsService');
 const jobsRouter = require('./routes/apiJobs');
 const schedulesRouter = require('./routes/apiSchedules');
 const sessionsRouter = require('./routes/apiSessions');
@@ -39,8 +34,6 @@ const destinationsRouter = require('./routes/apiDestinations');
 const presetsRouter = require('./routes/apiPresets');
 const historyRouter = require('./routes/apiHistory');
 const settingsRouter = require('./routes/apiSettings');
-const scenesRouter = require('./routes/apiScenes');
-const swapRulesRouter = require('./routes/apiSwapRules');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('-----------------------------------');
@@ -58,45 +51,6 @@ app.set("trust proxy", 1);
 const port = process.env.PORT || 6969;
 const tokens = new csrf();
 ensureDirectories();
-
-let setupCompleteCache = null;
-
-async function isSetupComplete() {
-  if (setupCompleteCache !== null) {
-    return setupCompleteCache;
-  }
-  try {
-    const [adminExists, settings] = await Promise.all([
-      checkIfAdminExists(),
-      readSettings({ includeSecrets: false }),
-    ]);
-    if (adminExists && !settings.setup_completed) {
-      await writeSettings({ setup_completed: 1 });
-      setupCompleteCache = true;
-      return true;
-    }
-    setupCompleteCache = Boolean(adminExists && settings.setup_completed);
-    return setupCompleteCache;
-  } catch (err) {
-    return false;
-  }
-}
-
-function markSetupComplete() {
-  setupCompleteCache = true;
-}
-
-function isStaticDuringSetup(reqPath) {
-  return (
-    reqPath.startsWith('/images') ||
-    reqPath.startsWith('/css') ||
-    reqPath.startsWith('/js') ||
-    reqPath.startsWith('/public') ||
-    reqPath.startsWith('/favicon') ||
-    reqPath === '/sw.js' ||
-    reqPath.startsWith('/uploads')
-  );
-}
 app.locals.helpers = {
   getUsername: function (req) {
     if (req.session && req.session.username) {
@@ -241,74 +195,9 @@ app.get('/sw.js', (req, res) => {
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
 app.use(express.json({ limit: '10gb' }));
 
-app.use(async (req, res, next) => {
-  const normalizedPath = req.path || '/';
-  if (normalizedPath === '/health' || normalizedPath === '/api/health') {
-    return next();
-  }
-
-  const installed = await isSetupComplete();
-  if (installed) {
-    return next();
-  }
-
-  if (normalizedPath === '/setup') {
-    return next();
-  }
-
-  if (isStaticDuringSetup(normalizedPath)) {
-    return next();
-  }
-
-  if (normalizedPath.startsWith('/api')) {
-    return res.status(503).json({ error: 'setup_required', redirect: '/setup' });
-  }
-
-  return res.redirect('/setup');
+app.get(['/health', '/api/health'], (req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
-
-app.get(['/health', '/api/health'], async (req, res) => {
-  try {
-    await get('SELECT 1 as ok');
-    const migrationVersion = await getCurrentMigrationVersion();
-    res.status(200).json({
-      status: 'ok',
-      db: {
-        connected: true,
-        migration_version: migrationVersion
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      db: {
-        connected: false,
-        error: error.message
-      }
-    });
-  }
-});
-
-app.post('/api/stop-all', requireApiAuth, async (_req, res) => {
-  try {
-    const stopped = await stopAllSessions();
-    res.json({ stopped });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
-
-// ZenStream v1 Basic APIs
-app.use('/api/jobs', requireApiAuth, jobsRouter);
-app.use('/api/schedules', requireApiAuth, schedulesRouter);
-app.use('/api/sessions', requireApiAuth, sessionsRouter);
-app.use('/api/assets', requireApiAuth, assetsRouter);
-app.use('/api/destinations', requireApiAuth, destinationsRouter);
-app.use('/api/presets', requireApiAuth, presetsRouter);
-app.use('/api/history', requireApiAuth, historyRouter);
-app.use('/api/settings', requireApiAuth, settingsRouter);
-app.use('/api/scenes', requireApiAuth, scenesRouter);
-app.use('/api/swap-rules', requireApiAuth, swapRulesRouter);
 
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
@@ -2381,21 +2270,6 @@ async function startServer() {
         await streamingService.syncStreamStatuses();
       } catch (error) {
         console.error('Failed to sync stream statuses:', error);
-      }
-      try {
-        await startScheduler();
-      } catch (error) {
-        console.error('Failed to start basic scheduler:', error);
-      }
-      try {
-        await startRunner();
-      } catch (error) {
-        console.error('Failed to start runner:', error);
-      }
-      try {
-        await startRetentionCleanup();
-      } catch (error) {
-        console.error('Failed to start retention cleanup:', error);
       }
     });
     server.timeout = 30 * 60 * 1000;

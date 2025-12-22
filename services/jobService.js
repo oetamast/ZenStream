@@ -3,21 +3,11 @@ const {
   AssetsRepository,
   DestinationsRepository,
   JobsRepository,
-  PresetsRepository,
   SchedulesRepository,
   SessionsRepository,
+  EventsRepository,
 } = require('../db/repositories');
-const { readSettings, isTierAtLeast } = require('./settingsService');
-const { recordEvent } = require('./eventService');
-const { refreshJobStatus } = require('./jobStatusService');
-
-class TierEnforcementError extends Error {
-  constructor(code, message, status = 403) {
-    super(message);
-    this.code = code;
-    this.status = status;
-  }
-}
+const { readSettings } = require('./settingsService');
 
 function normalizeZone(zone, fallback = 'UTC') {
   if (!zone) return fallback;
@@ -43,6 +33,41 @@ function parseAssetDurationSeconds(asset) {
   }
 }
 
+async function recordEvent({ event_type, message, job_id, session_id, schedule_id, metadata }) {
+  return EventsRepository.create({
+    event_type,
+    message,
+    job_id,
+    session_id,
+    schedule_id,
+    metadata_json: metadata ? JSON.stringify(metadata) : null,
+  });
+}
+
+async function refreshJobStatus(jobId) {
+  const job = await JobsRepository.findById(jobId);
+  if (!job) return null;
+  if (job.invalid_reason) {
+    await JobsRepository.updateStatus(job.id, 'invalid', job.invalid_reason);
+    return 'invalid';
+  }
+  const running = await SessionsRepository.findRunningByJob(jobId);
+  if (running) {
+    await JobsRepository.updateStatus(jobId, 'running', null);
+    return 'running';
+  }
+  const nowUtcIso = DateTime.utc().toISO();
+  const nextSchedule = await SchedulesRepository.findNextEnabled(jobId, nowUtcIso);
+  if (nextSchedule) {
+    await JobsRepository.updateStatus(jobId, 'planned', null);
+    return 'planned';
+  }
+  const hasHistory = await SessionsRepository.hasHistory(jobId);
+  const status = hasHistory ? 'stopped' : 'idle';
+  await JobsRepository.updateStatus(jobId, status, null);
+  return status;
+}
+
 function validateDurationAgainstAsset(durationSeconds, assetDuration, loopEnabled) {
   if (!durationSeconds || !assetDuration) return null;
   if (!loopEnabled && durationSeconds > assetDuration) {
@@ -60,82 +85,18 @@ function computeDurationSeconds(startDt, endDt) {
 async function buildJobPayload(job) {
   if (!job) return null;
   const nowUtcIso = DateTime.utc().toISO();
-  const [next_schedule, current_session, asset, destination, preset] = await Promise.all([
+  const [next_schedule, current_session] = await Promise.all([
     SchedulesRepository.findNextEnabled(job.id, nowUtcIso),
     SessionsRepository.findRunningByJob(job.id),
-    AssetsRepository.findById(job.video_asset_id),
-    DestinationsRepository.findById(job.destination_id),
-    job.preset_id ? PresetsRepository.findById(job.preset_id) : null,
   ]);
-  return { ...job, enabled: job.enabled !== 0, next_schedule, current_session, asset, destination, preset };
-}
-
-function detectRequestedFeatureLevel(payload = {}) {
-  const premiumRequested = Boolean(
-    payload.auto_recovery_enabled ||
-      (payload.audio_replace_config && Object.keys(payload.audio_replace_config).length) ||
-      (payload.hot_swap_mode && payload.hot_swap_mode !== 'none')
-  );
-  const ultimateRequested = Boolean(
-    (payload.scenes_json && payload.scenes_json !== null) ||
-      (payload.swap_rules_json && payload.swap_rules_json !== null)
-  );
-  if (ultimateRequested) return 'ultimate';
-  if (premiumRequested) return 'premium';
-  return null;
-}
-
-async function ensureTierForPayload(payload) {
-  const settings = await readSettings();
-  const requestedLevel = detectRequestedFeatureLevel(payload);
-  if (!requestedLevel) return settings;
-  if (!isTierAtLeast(settings.license_tier, requestedLevel)) {
-    const code = requestedLevel === 'premium' ? 'requires_premium' : 'requires_ultimate';
-    throw new TierEnforcementError(code, `This action requires ${requestedLevel} tier`, 403);
-  }
-  throw new TierEnforcementError('not_implemented', 'This feature is not available yet', 501);
-}
-
-async function validateJobIntegrity(job) {
-  if (!job) return { ok: false, message: 'Job not found' };
-  if (!job.enabled) {
-    return { ok: false, message: job.invalid_reason || 'Job is disabled. Please fix references.' };
-  }
-  const asset = await AssetsRepository.findById(job.video_asset_id);
-  if (!asset) return { ok: false, message: 'Job asset is missing. Please reselect an asset.' };
-  const destination = await DestinationsRepository.findById(job.destination_id);
-  if (!destination) return { ok: false, message: 'Job destination is missing. Please choose another destination.' };
-  if (job.preset_id) {
-    const preset = await PresetsRepository.findById(job.preset_id);
-    if (!preset) return { ok: false, message: 'Job preset is missing. Please choose another preset.' };
-  }
-  return { ok: true };
-}
-
-async function invalidateJobs(jobIds, reason) {
-  const uniqueIds = Array.from(new Set(jobIds.filter(Boolean)));
-  for (const jobId of uniqueIds) {
-    await stopSession(jobId, 'dependency_missing').catch(() => {});
-    await JobsRepository.markInvalid(jobId, reason);
-    await recordEvent({
-      event_type: 'job_invalidated',
-      message: reason,
-      job_id: jobId,
-    });
-    await refreshJobStatus(jobId);
-  }
+  return { ...job, next_schedule, current_session };
 }
 
 async function createJob(payload) {
-  await ensureTierForPayload(payload);
   const asset = await AssetsRepository.findById(payload.video_asset_id);
   if (!asset) throw new Error('Asset not found');
   const destination = await DestinationsRepository.findById(payload.destination_id);
   if (!destination) throw new Error('Destination not found');
-  if (payload.preset_id) {
-    const preset = await PresetsRepository.findById(payload.preset_id);
-    if (!preset) throw new Error('Preset not found');
-  }
 
   const job = await JobsRepository.create({
     name: payload.name,
@@ -145,25 +106,14 @@ async function createJob(payload) {
     loop_enabled: payload.loop_enabled ? 1 : 0,
     crossfade_seconds: payload.loop_enabled ? payload.crossfade_seconds || null : null,
     status: 'idle',
-    enabled: 1,
-    auto_recovery_enabled: payload.auto_recovery_enabled ? 1 : 0,
-    audio_replace_config: payload.audio_replace_config || null,
-    hot_swap_mode: payload.hot_swap_mode || null,
-    scenes_json: payload.scenes_json || null,
-    swap_rules_json: payload.swap_rules_json || null,
   });
   await refreshJobStatus(job.id);
   return job;
 }
 
 async function updateJob(id, payload) {
-  await ensureTierForPayload(payload);
   const existing = await JobsRepository.findById(id);
   if (!existing) return null;
-  if (payload.preset_id) {
-    const preset = await PresetsRepository.findById(payload.preset_id);
-    if (!preset) throw new Error('Preset not found');
-  }
   const updates = {
     name: payload.name,
     destination_id: payload.destination_id,
@@ -171,11 +121,6 @@ async function updateJob(id, payload) {
     loop_enabled: payload.loop_enabled,
     crossfade_seconds: payload.loop_enabled ? payload.crossfade_seconds : null,
     invalid_reason: payload.invalid_reason,
-    auto_recovery_enabled: payload.auto_recovery_enabled,
-    audio_replace_config: payload.audio_replace_config,
-    hot_swap_mode: payload.hot_swap_mode,
-    scenes_json: payload.scenes_json,
-    swap_rules_json: payload.swap_rules_json,
   };
   if (payload.video_asset_id) {
     const asset = await AssetsRepository.findById(payload.video_asset_id);
@@ -183,21 +128,20 @@ async function updateJob(id, payload) {
     updates.video_asset_id = payload.video_asset_id;
   }
   const updated = await JobsRepository.update(id, updates);
-  const validation = await validateJobIntegrity(updated);
-  if (!validation.ok) {
-    await JobsRepository.markInvalid(id, validation.message);
-  } else {
-    await JobsRepository.markEnabled(id);
-  }
   await refreshJobStatus(id);
-  return JobsRepository.findById(id);
+  return updated;
 }
 
 async function stopSession(jobId, reason = 'stopped') {
   const running = await SessionsRepository.findRunningByJob(jobId);
   if (!running) return null;
-  const { stopSessionProcess } = require('./runnerService');
-  await stopSessionProcess(running, reason);
+  await SessionsRepository.updateStatus(running.id, 'stopped', reason === 'stopped' ? null : reason);
+  await recordEvent({
+    event_type: 'session_stopped',
+    message: `Session stopped (${reason})`,
+    job_id: jobId,
+    session_id: running.id,
+  });
   await refreshJobStatus(jobId);
   return running;
 }
@@ -212,10 +156,6 @@ async function evaluateOpenEnded(loopEnabled, targetEnd) {
 async function runJobNow(jobId, options = {}) {
   const job = await JobsRepository.findById(jobId);
   if (!job) throw new Error('Job not found');
-  const validation = await validateJobIntegrity(job);
-  if (!validation.ok) {
-    throw new Error(validation.message);
-  }
   const asset = await AssetsRepository.findById(job.video_asset_id);
   if (!asset) throw new Error('Asset not found for job');
   const settings = await readSettings();
@@ -255,7 +195,7 @@ async function runJobNow(jobId, options = {}) {
 
   const session = await SessionsRepository.create({
     job_id: job.id,
-    status: 'pending',
+    status: 'running',
     started_at: startTime.toUTC().toISO(),
     target_end_at: targetEnd ? targetEnd.toUTC().toISO() : null,
   });
@@ -273,10 +213,6 @@ async function runJobNow(jobId, options = {}) {
 async function createSchedule(payload) {
   const job = await JobsRepository.findById(payload.job_id);
   if (!job) throw new Error('Job not found');
-  const validation = await validateJobIntegrity(job);
-  if (!validation.ok) {
-    throw new Error(validation.message);
-  }
   const asset = await AssetsRepository.findById(job.video_asset_id);
   if (!asset) throw new Error('Asset not found for job');
   const settings = await readSettings();
@@ -420,7 +356,6 @@ module.exports = {
   updateSchedule,
   disableSchedule,
   deleteSchedule,
-  invalidateJobs,
   refreshJobStatus,
   recordEvent,
 };
