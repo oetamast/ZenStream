@@ -1,60 +1,137 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
-echo "================================"
-echo "   StreamFlow Quick Installer  "
-echo "================================"
-echo
+if ! command -v sudo >/dev/null 2>&1; then
+  echo "sudo is required to run this installer." >&2
+  exit 1
+fi
 
-read -p "Mulai instalasi? (y/n): " -n 1 -r
-echo
-[[ ! $REPLY =~ ^[Yy]$ ]] && echo "Instalasi dibatalkan." && exit 1
+SUDO="sudo"
+PORT=${PORT:-6969}
+DATA_DIR=${DATA_DIR:-/data}
+NODE_VERSION_SETUP=${NODE_VERSION_SETUP:-https://deb.nodesource.com/setup_22.x}
 
-echo "🔄 Updating sistem..."
-sudo apt update && sudo apt upgrade -y
+info() { echo "[+] $1"; }
+warn() { echo "[!] $1"; }
 
-echo "📦 Installing Node.js..."
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
+ensure_packages() {
+  info "Updating apt packages..."
+  $SUDO apt-get update -y
+  $SUDO apt-get upgrade -y
 
-echo "🎬 Installing FFmpeg dan Git..."
-sudo apt install ffmpeg git -y
+  info "Installing Node.js (22.x), FFmpeg, Git, and UFW..."
+  curl -fsSL "$NODE_VERSION_SETUP" | $SUDO -E bash -
+  $SUDO apt-get install -y nodejs ffmpeg git ufw
+}
 
-echo "📥 Clone repository..."
-git clone https://github.com/bangtutorial/streamflow
-cd streamflow
+install_pm2() {
+  if command -v pm2 >/dev/null 2>&1; then
+    return
+  fi
+  info "Installing PM2 globally..."
+  $SUDO npm install -g pm2
+}
 
-echo "⚙️ Installing dependencies..."
-npm install
-npm run generate-secret
+setup_firewall() {
+  info "Configuring UFW firewall..."
+  $SUDO ufw allow OpenSSH || $SUDO ufw allow 22/tcp
+  $SUDO ufw allow ${PORT}/tcp
+  $SUDO ufw --force enable
+}
 
-echo "🕐 Setup timezone ke Asia/Jakarta..."
-sudo timedatectl set-timezone Asia/Jakarta
+prepare_data_dirs() {
+  info "Ensuring data directories under ${DATA_DIR}..."
+  $SUDO mkdir -p "${DATA_DIR}/db" "${DATA_DIR}/assets" "${DATA_DIR}/logs" "${DATA_DIR}/config" "${DATA_DIR}/ffmpeg"
+}
 
-echo "🔧 Setup firewall..."
-sudo ufw allow ssh
-sudo ufw allow 7575
-sudo ufw --force enable
+generate_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  else
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+  fi
+}
 
-echo "🚀 Installing PM2..."
-sudo npm install -g pm2
+load_or_create_secret() {
+  local secret_file="${DATA_DIR}/config/session_secret"
+  local current_secret="${SESSION_SECRET:-}"
 
-echo "▶️ Starting StreamFlow..."
-pm2 start app.js --name streamflow
-pm2 save
+  if [[ -z "$current_secret" && -f .env ]]; then
+    current_secret=$(grep -E '^SESSION_SECRET=' .env | head -n1 | cut -d= -f2- || true)
+  fi
 
-echo
-echo "================================"
-echo "✅ INSTALASI SELESAI!"
-echo "================================"
+  if [[ -z "$current_secret" && -f "$secret_file" ]]; then
+    current_secret="$($SUDO cat "$secret_file")"
+    info "Loaded SESSION_SECRET from ${secret_file}."
+  fi
 
-SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "IP_SERVER")
-echo
-echo "🌐 URL Akses: http://$SERVER_IP:7575"
-echo
-echo "📋 Langkah selanjutnya:"
-echo "1. Buka URL di browser"
-echo "2. Buat username & password"
-echo "3. Setelah membuat akun, lakukan Sign Out kemudian login kembali untuk sinkronisasi database"
-echo "================================"
+  if [[ -z "$current_secret" ]]; then
+    current_secret=$(generate_secret)
+    info "Generated new SESSION_SECRET and stored at ${secret_file}."
+    echo "$current_secret" | $SUDO tee "$secret_file" >/dev/null
+  else
+    if [[ ! -f "$secret_file" ]]; then
+      echo "$current_secret" | $SUDO tee "$secret_file" >/dev/null
+    fi
+  fi
+
+  SESSION_SECRET="$current_secret"
+  INSTALL_SECRET=${INSTALL_SECRET:-$SESSION_SECRET}
+}
+
+write_env_file() {
+  if [[ -f .env ]]; then
+    info ".env already exists; keeping existing values."
+    return
+  fi
+  info "Writing .env to ${SCRIPT_DIR}..."
+  cat > .env <<EOF_ENV
+PORT=${PORT}
+DATA_DIR=${DATA_DIR}
+SESSION_SECRET=${SESSION_SECRET}
+INSTALL_SECRET=${INSTALL_SECRET}
+EOF_ENV
+}
+
+install_dependencies() {
+  info "Installing Node dependencies (omit dev)..."
+  if ! npm ci --omit=dev; then
+    warn "npm ci failed, falling back to npm install --omit=dev"
+    npm install --omit=dev
+  fi
+}
+
+start_pm2() {
+  info "Starting ZenStream via PM2..."
+  export PORT DATA_DIR SESSION_SECRET INSTALL_SECRET
+  if pm2 list | grep -q " zenstream"; then
+    pm2 restart zenstream --update-env
+  else
+    pm2 start app.js --name zenstream --update-env
+  fi
+  pm2 save
+}
+
+print_finish() {
+  local ip
+  ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  [[ -z "$ip" ]] && ip="<server-ip>"
+  echo "============================================"
+  echo "ZenStream is running." 
+  echo "Open: http://${ip}:${PORT} to complete setup (first visit will redirect to /setup)."
+  echo "PM2 process: zenstream (port ${PORT})"
+  echo "============================================"
+}
+
+ensure_packages
+prepare_data_dirs
+load_or_create_secret
+write_env_file
+install_pm2
+install_dependencies
+setup_firewall
+start_pm2
+print_finish
