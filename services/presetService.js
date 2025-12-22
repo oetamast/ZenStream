@@ -1,6 +1,5 @@
-const { PresetsRepository, JobsRepository } = require('../db/repositories');
+const { PresetsRepository } = require('../db/repositories');
 const { recordEvent } = require('./eventService');
-const { invalidateJobs } = require('./jobService');
 
 const CODEC_PATTERN = /^[A-Za-z0-9_\.\-]+$/;
 
@@ -73,25 +72,12 @@ async function updatePreset(id, payload) {
 async function deletePreset(id) {
   const existing = await PresetsRepository.findById(id);
   if (!existing) return false;
-  const impactedJobs = await JobsRepository.findByPreset(id);
   await PresetsRepository.remove(id);
-  if (impactedJobs?.length) {
-    const reason = `Preset removed: ${existing.name}. Please choose another preset.`;
-    await invalidateJobs(
-      impactedJobs.map((j) => j.id),
-      reason
-    );
-  }
   await recordEvent({
     event_type: 'preset_deleted',
-    message: `Preset ${existing.name} deleted${impactedJobs?.length ? ` (impacted ${impactedJobs.length} jobs)` : ''}`,
+    message: `Preset ${existing.name} deleted`,
   });
   return true;
-}
-
-async function listImpactedJobsForPreset(id) {
-  const jobs = await JobsRepository.findByPreset(id);
-  return jobs || [];
 }
 
 async function listPresets() {
@@ -110,5 +96,4 @@ module.exports = {
   getPreset,
   validatePresetInput,
   normalizeFlags,
-  listImpactedJobsForPreset,
 };
