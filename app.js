@@ -26,10 +26,6 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
-const { stopAllSessions } = require('./services/jobService');
-const { startScheduler } = require('./services/jobScheduler');
-const { startRunner } = require('./services/runnerService');
-const { startRetentionCleanup } = require('./services/retentionService');
 const jobsRouter = require('./routes/apiJobs');
 const schedulesRouter = require('./routes/apiSchedules');
 const sessionsRouter = require('./routes/apiSessions');
@@ -199,46 +195,9 @@ app.get('/sw.js', (req, res) => {
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
 app.use(express.json({ limit: '10gb' }));
 
-app.get(['/health', '/api/health'], async (req, res) => {
-  try {
-    await get('SELECT 1 as ok');
-    const migrationVersion = await getCurrentMigrationVersion();
-    res.status(200).json({
-      status: 'ok',
-      db: {
-        connected: true,
-        migration_version: migrationVersion
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      db: {
-        connected: false,
-        error: error.message
-      }
-    });
-  }
+app.get(['/health', '/api/health'], (req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
-
-app.post('/api/stop-all', async (_req, res) => {
-  try {
-    const stopped = await stopAllSessions();
-    res.json({ stopped });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
-
-// ZenStream v1 Basic APIs
-app.use('/api/jobs', jobsRouter);
-app.use('/api/schedules', schedulesRouter);
-app.use('/api/sessions', sessionsRouter);
-app.use('/api/assets', assetsRouter);
-app.use('/api/destinations', destinationsRouter);
-app.use('/api/presets', presetsRouter);
-app.use('/api/history', historyRouter);
-app.use('/api/settings', settingsRouter);
 
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
@@ -2405,21 +2364,6 @@ async function startServer() {
         await streamingService.syncStreamStatuses();
       } catch (error) {
         console.error('Failed to sync stream statuses:', error);
-      }
-      try {
-        await startScheduler();
-      } catch (error) {
-        console.error('Failed to start basic scheduler:', error);
-      }
-      try {
-        await startRunner();
-      } catch (error) {
-        console.error('Failed to start runner:', error);
-      }
-      try {
-        await startRetentionCleanup();
-      } catch (error) {
-        console.error('Failed to start retention cleanup:', error);
       }
     });
     server.timeout = 30 * 60 * 1000;

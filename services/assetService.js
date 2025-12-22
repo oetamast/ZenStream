@@ -6,9 +6,8 @@ const { pipeline } = require('stream');
 const { promisify } = require('util');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { getUniqueFilename, paths, dataRoot } = require('../utils/storage');
-const { AssetsRepository, JobsRepository } = require('../db/repositories');
+const { AssetsRepository } = require('../db/repositories');
 const { recordEvent } = require('./eventService');
-const { invalidateJobs } = require('./jobService');
 
 const MAX_ASSET_SIZE_BYTES = 500 * 1024 * 1024;
 const ALLOWED_TYPES = ['video', 'audio', 'sfx'];
@@ -166,41 +165,6 @@ async function analyzeAsset(asset) {
     });
     throw err;
   }
-}
-
-async function listImpactedJobsForAsset(assetId) {
-  const jobs = await JobsRepository.findByAsset(assetId);
-  return jobs || [];
-}
-
-async function deleteAsset(assetId) {
-  const asset = await AssetsRepository.findById(assetId);
-  if (!asset) return null;
-  const impactedJobs = await listImpactedJobsForAsset(assetId);
-
-  if (asset.path) {
-    await fs.remove(asset.path).catch(() => {});
-  }
-  if (asset.thumbnail_path) {
-    await fs.remove(asset.thumbnail_path).catch(() => {});
-  }
-  await AssetsRepository.remove(assetId);
-
-  if (impactedJobs.length) {
-    const reason = `Asset removed: ${asset.filename}. Please reassign an asset.`;
-    await invalidateJobs(
-      impactedJobs.map((j) => j.id),
-      reason
-    );
-  }
-
-  await recordEvent({
-    event_type: 'asset_deleted',
-    message: `Asset ${asset.filename} deleted (impacted ${impactedJobs.length} jobs)`,
-    metadata: { asset_id: asset.id, impacted_jobs: impactedJobs.length },
-  });
-
-  return { asset, impactedJobs };
 }
 
 async function moveToFinalLocation(tempPath, assetType, originalName) {
@@ -384,7 +348,5 @@ module.exports = {
   listAssets,
   analyzeAssetById,
   importFromGoogleDrive,
-  listImpactedJobsForAsset,
-  deleteAsset,
   paths,
 };
