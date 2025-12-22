@@ -29,7 +29,7 @@ function loadSessionSecret(logger = console) {
 
   const generated = generateSecret();
   fs.writeFileSync(secretPath, generated, { mode: 0o600 });
-  logger.warn(`SESSION_SECRET not provided; generated new secret at ${secretPath}`);
+  logger.info(`Generated new session secret at ${secretPath}`);
   return generated;
 }
 

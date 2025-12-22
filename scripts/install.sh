@@ -74,10 +74,6 @@ generate_secret() {
 }
 
 create_env() {
-  if [[ -f "${INSTALL_DIR}/.env" ]]; then
-    echo ".env already exists in ${INSTALL_DIR}; keeping existing SESSION_SECRET and settings."
-    return
-  fi
   local secret
   secret=$(generate_secret)
   cat > "${INSTALL_DIR}/.env" <<EOF_ENV

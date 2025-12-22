@@ -4,10 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if ! command -v sudo >/dev/null 2>&1; then
-  echo "sudo is required to run this installer." >&2
-  exit 1
-fi
+echo "================================"
+echo "    ZenStream Quick Installer   "
+echo "================================"
+echo
 
 SUDO="sudo"
 PORT=${PORT:-6969}
@@ -47,91 +47,30 @@ prepare_data_dirs() {
   $SUDO mkdir -p "${DATA_DIR}/db" "${DATA_DIR}/assets" "${DATA_DIR}/logs" "${DATA_DIR}/config" "${DATA_DIR}/ffmpeg"
 }
 
-generate_secret() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-  else
-    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
-  fi
-}
+echo "🔧 Setup firewall..."
+sudo ufw allow ssh
+sudo ufw allow 6969
+sudo ufw --force enable
 
 load_or_create_secret() {
   local secret_file="${DATA_DIR}/config/session_secret"
   local current_secret="${SESSION_SECRET:-}"
 
-  if [[ -z "$current_secret" && -f .env ]]; then
-    current_secret=$(grep -E '^SESSION_SECRET=' .env | head -n1 | cut -d= -f2- || true)
-  fi
+echo "▶️ Starting ZenStream..."
+pm2 start app.js --name zenstream
+pm2 save
 
   if [[ -z "$current_secret" && -f "$secret_file" ]]; then
     current_secret="$($SUDO cat "$secret_file")"
     info "Loaded SESSION_SECRET from ${secret_file}."
   fi
 
-  if [[ -z "$current_secret" ]]; then
-    current_secret=$(generate_secret)
-    info "Generated new SESSION_SECRET and stored at ${secret_file}."
-    echo "$current_secret" | $SUDO tee "$secret_file" >/dev/null
-  else
-    if [[ ! -f "$secret_file" ]]; then
-      echo "$current_secret" | $SUDO tee "$secret_file" >/dev/null
-    fi
-  fi
-
-  SESSION_SECRET="$current_secret"
-  INSTALL_SECRET=${INSTALL_SECRET:-$SESSION_SECRET}
-}
-
-write_env_file() {
-  if [[ -f .env ]]; then
-    info ".env already exists; keeping existing values."
-    return
-  fi
-  info "Writing .env to ${SCRIPT_DIR}..."
-  cat > .env <<EOF_ENV
-PORT=${PORT}
-DATA_DIR=${DATA_DIR}
-SESSION_SECRET=${SESSION_SECRET}
-INSTALL_SECRET=${INSTALL_SECRET}
-EOF_ENV
-}
-
-install_dependencies() {
-  info "Installing Node dependencies (omit dev)..."
-  if ! npm ci --omit=dev; then
-    warn "npm ci failed, falling back to npm install --omit=dev"
-    npm install --omit=dev
-  fi
-}
-
-start_pm2() {
-  info "Starting ZenStream via PM2..."
-  export PORT DATA_DIR SESSION_SECRET INSTALL_SECRET
-  if pm2 list | grep -q " zenstream"; then
-    pm2 restart zenstream --update-env
-  else
-    pm2 start app.js --name zenstream --update-env
-  fi
-  pm2 save
-}
-
-print_finish() {
-  local ip
-  ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-  [[ -z "$ip" ]] && ip="<server-ip>"
-  echo "============================================"
-  echo "ZenStream is running." 
-  echo "Open: http://${ip}:${PORT} to complete setup (first visit will redirect to /setup)."
-  echo "PM2 process: zenstream (port ${PORT})"
-  echo "============================================"
-}
-
-ensure_packages
-prepare_data_dirs
-load_or_create_secret
-write_env_file
-install_pm2
-install_dependencies
-setup_firewall
-start_pm2
-print_finish
+SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "IP_SERVER")
+echo
+echo "🌐 URL Akses: http://$SERVER_IP:6969"
+echo
+echo "📋 Langkah selanjutnya:"
+echo "1. Buka URL di browser"
+echo "2. Buat username & password"
+echo "3. Setelah membuat akun, lakukan Sign Out kemudian login kembali untuk sinkronisasi database"
+echo "================================"
