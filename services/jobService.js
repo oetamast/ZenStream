@@ -5,10 +5,9 @@ const {
   JobsRepository,
   SchedulesRepository,
   SessionsRepository,
+  EventsRepository,
 } = require('../db/repositories');
 const { readSettings } = require('./settingsService');
-const { recordEvent } = require('./eventService');
-const { refreshJobStatus } = require('./jobStatusService');
 
 function normalizeZone(zone, fallback = 'UTC') {
   if (!zone) return fallback;
@@ -32,6 +31,41 @@ function parseAssetDurationSeconds(asset) {
   } catch (err) {
     return null;
   }
+}
+
+async function recordEvent({ event_type, message, job_id, session_id, schedule_id, metadata }) {
+  return EventsRepository.create({
+    event_type,
+    message,
+    job_id,
+    session_id,
+    schedule_id,
+    metadata_json: metadata ? JSON.stringify(metadata) : null,
+  });
+}
+
+async function refreshJobStatus(jobId) {
+  const job = await JobsRepository.findById(jobId);
+  if (!job) return null;
+  if (job.invalid_reason) {
+    await JobsRepository.updateStatus(job.id, 'invalid', job.invalid_reason);
+    return 'invalid';
+  }
+  const running = await SessionsRepository.findRunningByJob(jobId);
+  if (running) {
+    await JobsRepository.updateStatus(jobId, 'running', null);
+    return 'running';
+  }
+  const nowUtcIso = DateTime.utc().toISO();
+  const nextSchedule = await SchedulesRepository.findNextEnabled(jobId, nowUtcIso);
+  if (nextSchedule) {
+    await JobsRepository.updateStatus(jobId, 'planned', null);
+    return 'planned';
+  }
+  const hasHistory = await SessionsRepository.hasHistory(jobId);
+  const status = hasHistory ? 'stopped' : 'idle';
+  await JobsRepository.updateStatus(jobId, status, null);
+  return status;
 }
 
 function validateDurationAgainstAsset(durationSeconds, assetDuration, loopEnabled) {
@@ -101,8 +135,13 @@ async function updateJob(id, payload) {
 async function stopSession(jobId, reason = 'stopped') {
   const running = await SessionsRepository.findRunningByJob(jobId);
   if (!running) return null;
-  const { stopSessionProcess } = require('./runnerService');
-  await stopSessionProcess(running, reason);
+  await SessionsRepository.updateStatus(running.id, 'stopped', reason === 'stopped' ? null : reason);
+  await recordEvent({
+    event_type: 'session_stopped',
+    message: `Session stopped (${reason})`,
+    job_id: jobId,
+    session_id: running.id,
+  });
   await refreshJobStatus(jobId);
   return running;
 }
@@ -156,7 +195,7 @@ async function runJobNow(jobId, options = {}) {
 
   const session = await SessionsRepository.create({
     job_id: job.id,
-    status: 'pending',
+    status: 'running',
     started_at: startTime.toUTC().toISO(),
     target_end_at: targetEnd ? targetEnd.toUTC().toISO() : null,
   });

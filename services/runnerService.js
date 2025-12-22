@@ -13,8 +13,6 @@ const {
 const { recordEvent } = require('./eventService');
 const { refreshJobStatus } = require('./jobStatusService');
 const { paths } = require('../utils/storage');
-const { decryptSecret } = require('../utils/crypto');
-const { buildRtmpTarget } = require('./destinationService');
 
 const running = new Map(); // session_id -> state
 const retryTracker = new Map(); // session_id -> { count, nextAttempt, firstFailureAt }
@@ -23,17 +21,6 @@ const OPEN_ENDED_RETRY_MINUTES = 30;
 const POLL_INTERVAL_MS = 3000;
 let loopHandle = null;
 let ticking = false;
-
-function maskTarget(target, key) {
-  if (!target) return '';
-  if (key) return target.replace(key, '***');
-  const parts = target.split('/');
-  if (parts.length > 3) {
-    parts[parts.length - 1] = '***';
-    return parts.join('/');
-  }
-  return target;
-}
 
 function parseAssetDurationSeconds(asset) {
   if (!asset || !asset.metadata_json) return null;
@@ -67,6 +54,15 @@ function getDiskFreeMegabytes() {
   }
 }
 
+function buildTargetUrl(destination) {
+  const base = destination.stream_url.replace(/\/$/, '');
+  const key = destination.stream_key_enc.replace(/^\//, '');
+  if (destination.stream_url.includes(key)) {
+    return destination.stream_url;
+  }
+  return `${base}/${key}`;
+}
+
 function buildLoopArgs(job, assetDuration, preset) {
   const args = ['-re'];
   if (job.loop_enabled) {
@@ -89,7 +85,7 @@ function buildFilterComplex(job, assetDuration) {
 
 async function buildFfmpegArgs(job, asset, destination, preset) {
   const inputPath = asset.path;
-  const target = buildRtmpTarget(destination.stream_url, destination._stream_key_plain || '');
+  const target = buildTargetUrl(destination);
   const assetDuration = parseAssetDurationSeconds(asset);
   const loopArgs = buildLoopArgs(job, assetDuration, preset);
   const filter = buildFilterComplex(job, assetDuration);
@@ -255,31 +251,6 @@ async function startFfmpeg(session) {
     await markSessionFailed(session, 'Destination missing');
     return;
   }
-  if (!/^rtmps?:\/\//i.test(destination.stream_url || '')) {
-    await recordEvent({
-      event_type: 'session_blocked',
-      message: 'Destination URL invalid',
-      job_id: job.id,
-      session_id: session.id,
-    });
-    await JobsRepository.updateStatus(job.id, 'invalid', 'Destination URL invalid');
-    await markSessionFailed(session, 'Destination URL invalid');
-    return;
-  }
-  let streamKeyPlain = '';
-  try {
-    streamKeyPlain = decryptSecret(destination.stream_key_enc || '');
-  } catch (err) {
-    await recordEvent({
-      event_type: 'session_blocked',
-      message: 'Destination key could not be decrypted',
-      job_id: job.id,
-      session_id: session.id,
-    });
-    await JobsRepository.updateStatus(job.id, 'invalid', 'Destination key invalid');
-    await markSessionFailed(session, 'Destination key invalid');
-    return;
-  }
   const existingRunning = await SessionsRepository.findRunningByJob(job.id);
   if (existingRunning && existingRunning.id !== session.id) {
     await recordEvent({
@@ -320,7 +291,6 @@ async function startFfmpeg(session) {
     return;
   }
 
-  destination._stream_key_plain = streamKeyPlain;
   const preset = job.preset_id ? await PresetsRepository.findById(job.preset_id) : null;
   const ffmpegArgs = await buildFfmpegArgs(job, asset, destination, preset);
   const logDir = ensureFfmpegLogDir();
@@ -353,10 +323,7 @@ async function startFfmpeg(session) {
     job_id: job.id,
     session_id: session.id,
     metadata: {
-      target: maskTarget(
-        buildRtmpTarget(destination.stream_url, destination._stream_key_plain || ''),
-        destination._stream_key_plain || ''
-      ),
+      target: buildTargetUrl(destination).replace(destination.stream_key_enc, '***'),
       loop_enabled: !!job.loop_enabled,
       preset: preset?.name || null,
     }
