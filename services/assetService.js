@@ -3,6 +3,7 @@ const fs = require('fs-extra');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream');
 const { promisify } = require('util');
+const { v4: uuidv4 } = require('uuid');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { getUniqueFilename, paths, dataRoot } = require('../utils/storage');
 const { AssetsRepository, JobsRepository } = require('../db/repositories');
@@ -15,6 +16,10 @@ const MAX_ASSET_SIZE_BYTES = 500 * 1024 * 1024;
 const ALLOWED_TYPES = ['video', 'audio', 'sfx'];
 const TEMP_DIR = path.join(dataRoot, 'tmp/assets');
 const pipelineAsync = promisify(pipeline);
+
+function createImportId() {
+  return uuidv4();
+}
 
 function assertValidAssetType(assetType) {
   if (!ALLOWED_TYPES.includes(assetType)) {
@@ -402,7 +407,7 @@ async function startGoogleDriveImport({ shareUrl, fileId, assetType }) {
       throw err;
     }
   }
-  const importId = uuidv4();
+  const importId = createImportId();
   importStatuses.set(importId, { status: 'pending', progress: 0 });
   setImmediate(() => {
     runGoogleDriveImport(importId, {
@@ -432,4 +437,5 @@ module.exports = {
   listImpactedJobsForAsset,
   deleteAsset,
   paths,
+  _createImportId: createImportId,
 };

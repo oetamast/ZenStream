@@ -170,6 +170,7 @@ function isBotBlockHtml(html = '') {
 function normalizeActionUrl(action) {
   if (!action) return null;
   if (action.startsWith('http://') || action.startsWith('https://')) return action;
+  if (action.startsWith('drive.usercontent.google.com')) return `https://${action}`;
   if (action.startsWith('//')) return `https:${action}`;
   if (action.startsWith('/')) return `https://drive.google.com${action}`;
   return action;
@@ -177,12 +178,23 @@ function normalizeActionUrl(action) {
 
 async function resolveHtmlResponse(client, { res, fileId, resourceKey, contentDisposition }) {
   const html = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
+  logHtmlDebug(res, html, 'html_initial');
   const confirmToken = findConfirmToken(html);
   const downloadForm = findDownloadForm(html);
 
   if (downloadForm) {
-    const actionUrl = normalizeActionUrl(downloadForm.action);
+    const normalized = normalizeActionUrl(downloadForm.action);
+    let actionUrl = normalized;
     const params = { ...downloadForm.params };
+    try {
+      const parsed = new URL(normalized);
+      actionUrl = `${parsed.origin}${parsed.pathname}`;
+      parsed.searchParams.forEach((value, key) => {
+        if (params[key] === undefined) params[key] = value;
+      });
+    } catch (e) {
+      // fall back to normalized action
+    }
     if (resourceKey && !params.resourcekey) params.resourcekey = resourceKey;
     res = await client.get(actionUrl, { params });
     contentDisposition = res.headers['content-disposition'] || contentDisposition;
