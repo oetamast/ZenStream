@@ -2,17 +2,17 @@ version: '3.8'
 services:
   app:
     build: .
-    container_name: streamflow-app
+    container_name: zenstream-app
     restart: unless-stopped
     ports:
-      - "7575:7575"
+      - "6969:6969"
     env_file:
       - .env
     volumes:
+      - ./data:/data
       - ./db:/app/db
-      - ./logs:/app/logs
-      - ./public/uploads:/app/public/uploads
     environment:
       - NODE_ENV=production
+      - DATA_DIR=/data
     # Uncomment jika ingin mengatur timezone container
-    # - TZ=Asia/Jakarta 
+    # - TZ=Asia/Jakarta
