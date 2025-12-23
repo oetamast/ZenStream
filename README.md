@@ -40,19 +40,18 @@ PORT=6969 SESSION_SECRET=$(cat /data/config/session_secret 2>/dev/null || echo "
 
 - **Streams**: create jobs by selecting a video asset, destination, and preset, then start via Run Now (duration or schedule window).
 - **Assets**: upload up to 500MB, view analyzed metadata and thumbnails, and trigger re-analysis when needed.
-- **Destinations**: add YouTube RTMP/RTMPS targets, store stream keys safely, and reveal keys on demand.
+- **Destinations**: add YouTube RTMP/RTMPS targets, store stream keys safely, and reveal keys on demand (you can also create a destination inline from the New Stream form).
 - **Presets**: choose copy/remux (default) or encode (with optional codecs) for FFmpeg sessions.
 - **History**: view recent events and open FFmpeg logs per session.
 
 ### First Stream (end-to-end)
 
-1. Go to **Destinations** → **New Destination** and enter your YouTube RTMP/RTMPS URL plus stream key (keep key separate from the URL for safety).
+1. Go to **Streams** → **New Stream**, name it, select the uploaded video, and either choose an existing destination or enter an RTMP URL + stream key inline. Pick your preset and save.
 2. Go to **Assets** → **Upload video** (max 500MB). Wait for analysis to finish; a thumbnail should appear.
 3. Go to **Presets** and keep the default **Copy/Remux** preset (or create one if you prefer encoding).
-4. Go to **Streams** → **New Stream**, name it, select the uploaded video, the destination, and your preset, then save.
-5. Click **Run now** on the stream card. The status should flip to **running** once FFmpeg starts.
-6. To stop, click **Stop** on the stream card.
-7. Open **History** to see recent events and use **View log** to read the FFmpeg output for the session.
+4. Back on **Streams**, click **Run now** on the stream card. The status should flip to **running** once FFmpeg starts.
+5. To stop, click **Stop** on the stream card.
+6. Open **History** to see recent events and use **View log** to read the FFmpeg output for the session.
 
 ## Data directories
 
@@ -80,8 +79,8 @@ Mount a host directory to `/data` in `docker-compose.yml` to preserve uploads an
 - Search by filename only with `GET /api/assets?type=video&query=<substring>` (results are newest first).
 - Google Drive import:
   - Public share links do **not** require OAuth. Use the Assets page “Import from Google Drive” button or call `POST /api/assets/google-drive/import` with `share_url` + `asset_type`. Large links that show Google’s “can’t scan / download anyway” interstitial are followed automatically.
-  - Private links still require OAuth: set client ID/secret and redirect URL (e.g., `http://<host>:6969/api/assets/google-drive/auth/callback`) in **Settings → Google Drive**, then click **Connect Google Drive**. Tokens are encrypted at rest.
-  - If Google Drive responds with a permission page, rate limit message, or bot block, the API surfaces a clear error (permission, rate limit, or automated-traffic blocked) so you know whether to change sharing, wait, or try OAuth.
+  - Private links must be shared with “Anyone with the link.” OAuth connection is not exposed in the v1 UI.
+  - If Google Drive responds with a permission page, rate limit message, or bot block, the API surfaces a clear error (permission, rate limit, or automated-traffic blocked) so you know whether to change sharing or wait.
   - Check status with `GET /api/assets/google-drive/status/:id`; events log successes/failures.
 
 ### Destinations (YouTube RTMP/RTMPS)

@@ -81,6 +81,28 @@ async function runFfprobe(filePath) {
   });
 }
 
+function normalizeAnalyzeError(err, asset) {
+  if (!err) return new Error('Asset analysis failed');
+  if (err.code === 'ENOENT' && err.syscall && err.syscall.includes('ffprobe')) {
+    const friendly = new Error('ffmpeg/ffprobe not installed');
+    friendly.status = 500;
+    friendly.code = 'FFPROBE_MISSING';
+    return friendly;
+  }
+  if (err.code === 'EACCES' || err.code === 'EPERM') {
+    const friendly = new Error(
+      `Cannot write analysis output to ${asset?.path || 'file path'}. Check /data permissions.`
+    );
+    friendly.status = 500;
+    friendly.code = 'ASSET_WRITE_DENIED';
+    return friendly;
+  }
+  const friendly = new Error(err.message || 'Asset analysis failed');
+  friendly.status = err.status || 500;
+  friendly.code = err.code;
+  return friendly;
+}
+
 function summarizeMetadata(probeJson, fileSize) {
   const videoStream = probeJson?.streams?.find((s) => s.codec_type === 'video');
   const audioStream = probeJson?.streams?.find((s) => s.codec_type === 'audio');
@@ -170,7 +192,7 @@ async function analyzeAsset(asset) {
       message: 'Asset analysis failed',
       metadata: { asset_id: asset.id },
     });
-    throw err;
+    throw normalizeAnalyzeError(err, asset);
   }
 }
 

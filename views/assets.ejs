@@ -43,16 +43,11 @@
   <div class="flex items-center justify-between mb-3">
     <div>
       <h2 class="font-semibold">Google Drive import</h2>
-      <p class="text-gray-400 text-sm">Public share links work without OAuth. Connect for private files.</p>
+      <p class="text-gray-400 text-sm">Paste a public share link to import directly.</p>
     </div>
-    <span id="driveStatusBadge" class="text-xs text-gray-400">Checking...</span>
-  </div>
-  <div class="flex flex-wrap gap-3">
-    <button id="driveAuthBtn" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Connect Google Drive</button>
     <button id="openDriveImport" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Import from Google Drive</button>
-    <button id="refreshDriveStatus" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Refresh status</button>
   </div>
-  <p class="text-xs text-gray-500 mt-2">Set client ID/secret in Settings if you need to pull private Drive files. Tokens are stored encrypted.</p>
+  <p class="text-xs text-gray-500 mt-2">Private files must be shared with “Anyone with the link.” OAuth connection is not required for v1.</p>
   <p id="driveStatusMsg" class="text-sm mt-2 hidden"></p>
 </div>
 
@@ -133,48 +128,6 @@
     assetsGrid.innerHTML = assets.map(renderAsset).join('');
   }
 
-  function setDriveStatusText(status) {
-    driveStatus = status || { configured: false, connected: false };
-    if (driveStatus.connected) {
-      driveStatusBadge.textContent = 'Drive connected';
-      driveStatusBadge.className = 'text-xs text-green-400';
-    } else if (driveStatus.configured) {
-      driveStatusBadge.textContent = 'Configured (authorize to import)';
-      driveStatusBadge.className = 'text-xs text-amber-300';
-    } else {
-      driveStatusBadge.textContent = 'Not configured';
-      driveStatusBadge.className = 'text-xs text-gray-400';
-    }
-  }
-
-  async function refreshDriveStatus() {
-    try {
-      const status = await fetchJson('/api/assets/google-drive/auth/status');
-      setDriveStatusText(status);
-      driveStatusMsg.classList.add('hidden');
-    } catch (err) {
-      setDriveStatusText(null);
-      driveStatusMsg.textContent = 'Unable to read Google Drive status';
-      driveStatusMsg.classList.remove('hidden');
-      driveStatusMsg.classList.add('text-red-400');
-    }
-  }
-
-  async function startDriveAuth() {
-    driveStatusMsg.classList.add('hidden');
-    try {
-      const data = await fetchJson('/api/assets/google-drive/auth/start', { method: 'POST' });
-      window.open(data.authUrl, '_blank');
-      driveStatusMsg.textContent = 'Complete the Google prompt, then click Refresh status.';
-      driveStatusMsg.classList.remove('hidden', 'text-red-400');
-      driveStatusMsg.classList.add('text-gray-300');
-    } catch (err) {
-      driveStatusMsg.textContent = err.message;
-      driveStatusMsg.classList.remove('hidden');
-      driveStatusMsg.classList.add('text-red-400');
-    }
-  }
-
   function openDriveImportModal() {
     driveImportError.classList.add('hidden');
     driveImportStatus.textContent = 'Paste a Drive public share link or file id to import.';
@@ -241,6 +194,7 @@
   function renderAsset(asset) {
     const meta = safeMeta(asset.metadata_json);
     const durationLabel = meta.format?.duration || meta.duration;
+    const statusLabel = asset.status ? asset.status : 'unknown';
     return `<div class="bg-dark-800 border border-gray-700 rounded-lg p-3 flex gap-3">
       <div class="w-28 h-20 bg-dark-700 rounded overflow-hidden flex items-center justify-center">
         ${asset.thumbnail_path ? `<img src="/api/assets/${asset.id}/thumbnail" class="object-cover w-full h-full" />` : '<span class="text-gray-500 text-xs">No thumbnail</span>'}
@@ -251,16 +205,32 @@
         ${durationLabel ? `<div class="text-xs text-gray-400">Duration: ${Number(durationLabel).toFixed(1)}s</div>` : ''}
         <div class="text-xs text-gray-500">Created: ${new Date(asset.created_at).toLocaleString()}</div>
         <div class="mt-2 flex gap-2">
-          <button class="text-sm text-blue-400" onclick="analyzeAsset('${asset.id}')">Analyze</button>
+          <button class="text-sm text-blue-400" data-analyze="${asset.id}" onclick="analyzeAsset('${asset.id}')">${asset.status === 'ready' ? 'Re-analyze' : 'Analyze'}</button>
           <button class="text-sm text-red-400" onclick="openAssetDelete('${asset.id}', '${asset.filename}')">Delete</button>
         </div>
+        <div class="text-xs text-gray-400 mt-1">Status: ${statusLabel}</div>
       </div>
     </div>`;
   }
 
   async function analyzeAsset(id) {
-    await fetchJson(`/api/assets/${id}/analyze`, { method: 'POST' });
-    await loadAssets();
+    const btn = document.querySelector(`button[data-analyze="${id}"]`);
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Analyzing...';
+    }
+    try {
+      await fetchJson(`/api/assets/${id}/analyze`, { method: 'POST' });
+      await loadAssets();
+      alert('Analysis complete');
+    } catch (err) {
+      alert(`Analyze failed: ${err.message}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Analyze';
+      }
+    }
   }
 
   async function uploadAsset() {
@@ -293,11 +263,8 @@
   const assetDeleteModal = document.getElementById('assetDeleteModal');
   let assetDeleteTarget = null;
 
-  const driveStatusBadge = document.getElementById('driveStatusBadge');
   const driveStatusMsg = document.getElementById('driveStatusMsg');
-  const driveAuthBtn = document.getElementById('driveAuthBtn');
   const openDriveImportBtn = document.getElementById('openDriveImport');
-  const refreshDriveStatusBtn = document.getElementById('refreshDriveStatus');
   const driveImportModal = document.getElementById('driveImportModal');
   const driveImportLink = document.getElementById('driveImportLink');
   const driveImportType = document.getElementById('driveImportType');
@@ -306,7 +273,6 @@
   const confirmDriveImportBtn = document.getElementById('confirmDriveImport');
   const cancelDriveImportBtn = document.getElementById('cancelDriveImport');
   const closeDriveImportBtn = document.getElementById('closeDriveImport');
-  let driveStatus = { configured: false, connected: false };
 
   async function openAssetDelete(id) {
     assetDeleteTarget = id;
@@ -345,16 +311,13 @@
   document.getElementById('cancelAssetDelete').onclick = () => assetDeleteModal.classList.add('hidden');
   document.getElementById('closeAssetDelete').onclick = () => assetDeleteModal.classList.add('hidden');
 
-  driveAuthBtn.onclick = startDriveAuth;
   openDriveImportBtn.onclick = () => {
     driveStatusMsg.classList.add('hidden');
     openDriveImportModal();
   };
-  refreshDriveStatusBtn.onclick = refreshDriveStatus;
   confirmDriveImportBtn.onclick = startDriveImport;
   cancelDriveImportBtn.onclick = closeDriveImportModal;
   closeDriveImportBtn.onclick = closeDriveImportModal;
 
   loadAssets();
-  refreshDriveStatus();
 </script>

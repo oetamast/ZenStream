@@ -34,10 +34,6 @@
       <select id="jobAsset" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2"></select>
     </div>
     <div>
-      <label class="block text-sm mb-1">Destination</label>
-      <select id="jobDestination" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2"></select>
-    </div>
-    <div>
       <label class="block text-sm mb-1">Preset</label>
       <select id="jobPreset" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2"></select>
     </div>
@@ -50,6 +46,40 @@
     <div>
       <label class="block text-sm mb-1">Crossfade seconds (loop only)</label>
       <input id="jobCrossfade" type="number" min="0" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+    </div>
+  </div>
+  <div class="border border-gray-700 rounded p-3 mt-3 bg-dark-800/50">
+    <div class="flex items-center justify-between mb-2">
+      <div>
+        <h3 class="font-semibold text-sm">Destination</h3>
+        <p class="text-xs text-gray-500">Provide your RTMP endpoint and key directly while creating the stream.</p>
+      </div>
+      <div class="flex gap-3 text-sm">
+        <label class="flex items-center gap-2"><input type="radio" name="destMode" id="destModeExisting" class="accent-primary" checked /> Use existing</label>
+        <label class="flex items-center gap-2"><input type="radio" name="destMode" id="destModeNew" class="accent-primary" /> Create inline</label>
+      </div>
+    </div>
+    <div id="existingDestinationRow" class="grid md:grid-cols-2 gap-3">
+      <div>
+        <label class="block text-sm mb-1">Choose destination</label>
+        <select id="jobDestination" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2"></select>
+      </div>
+      <div class="flex items-end"><p class="text-xs text-gray-500">Manage saved destinations on the Destinations page.</p></div>
+    </div>
+    <div id="newDestinationFields" class="hidden grid md:grid-cols-2 gap-3 mt-3">
+      <div>
+        <label class="block text-sm mb-1">Destination name</label>
+        <input id="newDestName" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="YouTube" />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">RTMP/RTMPS URL</label>
+        <input id="newDestUrl" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="rtmps://a.rtmp.youtube.com/live2" />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Stream key</label>
+        <input id="newDestKey" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="xxxx-xxxx-xxxx" />
+      </div>
+      <div class="flex items-end"><p class="text-xs text-gray-500">Keys are stored encrypted and not shown unless you reveal them.</p></div>
     </div>
   </div>
   <div class="grid md:grid-cols-2 gap-4 mt-3">
@@ -147,10 +177,14 @@
   let selectedFilter = 'all';
   let jobsCache = [];
   let editingJobId = null;
+  let useNewDestination = false;
 
   document.getElementById('openJobForm').onclick = () => {
     editingJobId = null;
     document.getElementById('saveJob').textContent = 'Create';
+    setDestinationMode('existing');
+    clearNewDestinationFields();
+    loadSelects();
     jobForm.classList.remove('hidden');
   };
   document.getElementById('closeJobForm').onclick = () => jobForm.classList.add('hidden');
@@ -172,6 +206,20 @@
       throw new Error(body.message || 'Request failed');
     }
     return res.json();
+  }
+
+  function setDestinationMode(mode) {
+    useNewDestination = mode === 'new';
+    document.getElementById('destModeExisting').checked = !useNewDestination;
+    document.getElementById('destModeNew').checked = useNewDestination;
+    document.getElementById('existingDestinationRow').classList.toggle('hidden', useNewDestination);
+    document.getElementById('newDestinationFields').classList.toggle('hidden', !useNewDestination);
+  }
+
+  function clearNewDestinationFields() {
+    document.getElementById('newDestName').value = '';
+    document.getElementById('newDestUrl').value = '';
+    document.getElementById('newDestKey').value = '';
   }
 
   function toggleRunMode() {
@@ -237,11 +285,37 @@
     const body = {
       name: document.getElementById('jobName').value,
       video_asset_id: document.getElementById('jobAsset').value,
-      destination_id: document.getElementById('jobDestination').value,
       preset_id: document.getElementById('jobPreset').value || null,
       loop_enabled: document.getElementById('jobLoop').checked,
       crossfade_seconds: document.getElementById('jobCrossfade').value || null,
     };
+    try {
+      if (useNewDestination) {
+        const name = document.getElementById('newDestName').value.trim();
+        const stream_url = document.getElementById('newDestUrl').value.trim();
+        const stream_key = document.getElementById('newDestKey').value.trim();
+        if (!name || !stream_url) {
+          jobFormError.textContent = 'Destination name and RTMP URL are required';
+          jobFormError.classList.remove('hidden');
+          return;
+        }
+        const destResp = await fetchJson('/api/destinations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, stream_url, stream_key }),
+        });
+        body.destination_id = destResp.id;
+        await loadSelects();
+        document.getElementById('jobDestination').value = destResp.id;
+      } else {
+        body.destination_id = document.getElementById('jobDestination').value;
+      }
+    } catch (err) {
+      jobFormError.textContent = err.message;
+      jobFormError.classList.remove('hidden');
+      return;
+    }
+
     if (!body.video_asset_id || !body.destination_id) {
       jobFormError.textContent = 'Please select an asset and destination';
       jobFormError.classList.remove('hidden');
@@ -262,6 +336,9 @@
   }
   document.getElementById('saveJob').onclick = createJob;
 
+  document.getElementById('destModeExisting').onchange = () => setDestinationMode('existing');
+  document.getElementById('destModeNew').onchange = () => setDestinationMode('new');
+
   function editJob(id) {
     const job = jobsCache.find((j) => j.id === id);
     if (!job) return;
@@ -272,6 +349,7 @@
     document.getElementById('jobPreset').value = job.preset_id || '';
     document.getElementById('jobLoop').checked = !!job.loop_enabled;
     document.getElementById('jobCrossfade').value = job.crossfade_seconds || '';
+    setDestinationMode('existing');
     document.getElementById('saveJob').textContent = 'Update';
     jobForm.classList.remove('hidden');
   }

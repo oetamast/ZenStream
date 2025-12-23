@@ -59,7 +59,7 @@ async function streamToStringLimited(stream, limit) {
 
 function buildPermissionError() {
   const err = new Error(
-    "This Google Drive link requires permission. Set sharing to 'Anyone with the link' or connect Google Drive (OAuth)."
+    "This Google Drive link requires permission. Set sharing to 'Anyone with the link'."
   );
   err.status = 403;
   err.code = 'GDRIVE_PERMISSION_REQUIRED';
