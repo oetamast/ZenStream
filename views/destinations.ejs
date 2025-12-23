@@ -1,0 +1,164 @@
+<% layout('layout') -%>
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Destinations</h1>
+    <p class="text-gray-400 text-sm">Configure RTMP/RTMPS targets (YouTube supported).</p>
+  </div>
+  <button id="refreshDestinations" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Refresh</button>
+</div>
+
+<div class="bg-dark-800 border border-gray-700 rounded-lg p-4 mb-6">
+  <h2 class="font-semibold mb-3">Create destination</h2>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm mb-1">Name</label>
+      <input id="destName" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="YouTube" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Stream URL (rtmp/rtmps)</label>
+      <input id="destUrl" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="rtmps://a.rtmp.youtube.com/live2" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Stream key</label>
+      <div class="flex">
+        <input id="destKey" type="password" class="flex-1 bg-dark-700 border border-gray-600 rounded-l px-3 py-2" placeholder="xxxx-xxxx" />
+        <button id="toggleKey" class="bg-gray-700 px-3 rounded-r">👁</button>
+      </div>
+    </div>
+  </div>
+  <div class="mt-4 flex justify-end">
+    <button id="createDestination" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Save</button>
+  </div>
+  <p id="destError" class="text-red-400 text-sm mt-2 hidden"></p>
+</div>
+
+<div id="destEmpty" class="hidden text-gray-400 text-sm">No destinations created.</div>
+<div id="destList" class="space-y-3"></div>
+
+<div id="destDeleteModal" class="hidden fixed inset-0 bg-black/70 z-40 items-center justify-center p-4">
+  <div class="bg-dark-800 border border-gray-700 rounded-lg w-full max-w-lg p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-semibold">Delete destination</h3>
+      <button id="closeDestDelete" class="text-gray-400 hover:text-white"><i class="ti ti-x"></i></button>
+    </div>
+    <p class="text-sm text-red-300">Deleting this destination will disable any streams using it.</p>
+    <div class="bg-dark-700 border border-gray-600 rounded p-2 max-h-40 overflow-auto text-sm" id="destImpactList"></div>
+    <label class="inline-flex items-center gap-2 text-sm">
+      <input type="checkbox" id="destDeleteConfirm" class="accent-primary" />
+      I understand and want to delete this destination.
+    </label>
+    <p id="destDeleteError" class="hidden text-red-400 text-sm"></p>
+    <div class="flex justify-end gap-3">
+      <button id="cancelDestDelete" class="bg-gray-700 text-white px-4 py-2 rounded">Cancel</button>
+      <button id="confirmDestDelete" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const destList = document.getElementById('destList');
+  const destEmpty = document.getElementById('destEmpty');
+  const destKeyInput = document.getElementById('destKey');
+  document.getElementById('toggleKey').onclick = () => {
+    destKeyInput.type = destKeyInput.type === 'password' ? 'text' : 'password';
+  };
+
+  async function fetchJson(url, options) {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.message || 'Request failed');
+    }
+    return res.json();
+  }
+
+  async function loadDestinations() {
+    const data = await fetchJson('/api/destinations');
+    const items = data.destinations || [];
+    destEmpty.classList.toggle('hidden', items.length > 0);
+    destList.innerHTML = items.map(renderDest).join('');
+  }
+
+  function renderDest(dest) {
+    return `<div class="bg-dark-800 border border-gray-700 rounded-lg p-3 flex items-center justify-between">
+      <div>
+        <div class="font-semibold">${dest.name}</div>
+        <div class="text-xs text-gray-400">${dest.platform} • ${dest.stream_url}</div>
+        <div class="text-xs text-gray-500">${dest.has_stream_key ? 'Stream key stored' : 'No key'}</div>
+      </div>
+      <div class="flex gap-2">
+        <button class="text-sm text-blue-400" onclick="revealKey('${dest.id}')">Reveal</button>
+        <button class="text-sm text-red-400" onclick="openDestDelete('${dest.id}')">Delete</button>
+      </div>
+    </div>`;
+  }
+
+  async function createDestination() {
+    destError.classList.add('hidden');
+    const body = {
+      name: document.getElementById('destName').value,
+      stream_url: document.getElementById('destUrl').value,
+      stream_key: document.getElementById('destKey').value,
+    };
+    try {
+      await fetchJson('/api/destinations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await loadDestinations();
+    } catch (err) {
+      destError.textContent = err.message;
+      destError.classList.remove('hidden');
+    }
+  }
+
+  const destDeleteModal = document.getElementById('destDeleteModal');
+  let destDeleteId = null;
+
+  async function openDestDelete(id) {
+    destDeleteId = id;
+    document.getElementById('destDeleteConfirm').checked = false;
+    document.getElementById('destDeleteError').classList.add('hidden');
+    const listEl = document.getElementById('destImpactList');
+    listEl.innerHTML = 'Loading impacted streams...';
+    destDeleteModal.classList.remove('hidden');
+    const data = await fetchJson(`/api/destinations/${id}/impacted-jobs`).catch(() => ({ impacted_jobs: [], total: 0 }));
+    const items = data.impacted_jobs || [];
+    const extra = data.total && data.total > items.length ? data.total - items.length : 0;
+    listEl.innerHTML = items.length
+      ? `<ul class="list-disc list-inside space-y-1">${items.map((j) => `<li>${j.name}</li>`).join('')}</ul>${extra ? `<div class=\"text-xs text-gray-400 mt-1\">+${extra} more</div>` : ''}`
+      : '<div class="text-gray-400 text-sm">No impacted streams.</div>';
+  }
+
+  async function deleteDest() {
+    const confirmed = document.getElementById('destDeleteConfirm').checked;
+    const errEl = document.getElementById('destDeleteError');
+    if (!confirmed) {
+      errEl.textContent = 'Please confirm deletion.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    try {
+      await fetchJson(`/api/destinations/${destDeleteId}?force=true`, { method: 'DELETE' });
+      destDeleteModal.classList.add('hidden');
+      await loadDestinations();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  }
+
+  async function revealKey(id) {
+    try {
+      const data = await fetchJson(`/api/destinations/${id}/reveal`, { method: 'POST' });
+      alert('Stream key: ' + data.stream_key);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  document.getElementById('createDestination').onclick = createDestination;
+  document.getElementById('refreshDestinations').onclick = loadDestinations;
+  document.getElementById('confirmDestDelete').onclick = deleteDest;
+  document.getElementById('cancelDestDelete').onclick = () => destDeleteModal.classList.add('hidden');
+  document.getElementById('closeDestDelete').onclick = () => destDeleteModal.classList.add('hidden');
+
+  loadDestinations();
+</script>
