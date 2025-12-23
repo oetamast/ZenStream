@@ -4,6 +4,7 @@ const express = require('express');
 const path = require('path');
 const engine = require('ejs-mate');
 const os = require('os');
+const { execFile } = require('child_process');
 const multer = require('multer');
 const fs = require('fs');
 const csrf = require('csrf');
@@ -272,14 +273,44 @@ app.use(async (req, res, next) => {
   return res.redirect('/setup');
 });
 
-app.get(['/health', '/api/health'], async (_req, res) => {
+async function checkFfmpegAvailable() {
+  const bin = (ffmpegInstaller && ffmpegInstaller.path) || 'ffmpeg';
+  try {
+    const { stdout } = await new Promise((resolve, reject) => {
+      execFile(bin, ['-version'], { maxBuffer: 1024 * 1024 }, (err, stdout) => {
+        if (err) return reject(err);
+        resolve({ stdout });
+      });
+    });
+    const firstLine = stdout.split('\n')[0];
+    return { ok: true, version: firstLine };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+async function checkStorageWritable() {
+  const dataRoot = process.env.DATA_DIR || '/data';
+  const probeFile = path.join(dataRoot, 'health_probe.tmp');
+  try {
+    await fs.promises.mkdir(dataRoot, { recursive: true });
+    await fs.promises.writeFile(probeFile, 'ok');
+    await fs.promises.unlink(probeFile);
+    return { ok: true, path: dataRoot };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+app.get(['/health', '/api/health'], async (req, res) => {
+  const verbose = req.query.verbose === '1' || req.query.verbose === 'true';
   const payload = {
     ok: true,
     version: appVersion,
     uptime: process.uptime(),
     db: {
-      ok: false
-    }
+      ok: false,
+    },
   };
 
   try {
@@ -287,13 +318,18 @@ app.get(['/health', '/api/health'], async (_req, res) => {
     const migrationVersion = await getCurrentMigrationVersion();
     payload.db = {
       ok: true,
-      migration_version: migrationVersion
+      migration_version: migrationVersion,
     };
   } catch (error) {
     payload.db = {
       ok: false,
-      error: error.message
+      error: error.message,
     };
+  }
+
+  if (verbose) {
+    payload.ffmpeg = await checkFfmpegAvailable();
+    payload.storage = await checkStorageWritable();
   }
 
   res.status(200).json(payload);

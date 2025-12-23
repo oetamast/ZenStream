@@ -9,6 +9,9 @@ const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
 const DOWNLOAD_URL = 'https://drive.google.com/uc';
 const HTML_PREVIEW_LIMIT = 1024 * 1024; // 1MB
+const HTML_LOG_SLICE = 500;
+const USER_AGENT =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 function extractFileId(input) {
   if (!input) return null;
@@ -66,6 +69,9 @@ function buildClient(jar) {
       timeout: 30000,
       maxRedirects: 5,
       validateStatus: (status) => status < 500,
+      headers: {
+        'User-Agent': USER_AGENT,
+      },
     })
   );
 }
@@ -76,23 +82,73 @@ async function requestDownload(client, { fileId, confirmToken }) {
   return client.get(DOWNLOAD_URL, { params });
 }
 
+function isHtmlResponse(res) {
+  const type = res.headers['content-type'] || '';
+  return type.includes('text/html');
+}
+
+function sniffPermissionHtml(html = '') {
+  const lowered = html.toLowerCase();
+  return (
+    lowered.includes('accounts.google.com') ||
+    lowered.includes('servicelogin') ||
+    lowered.includes('you need access') ||
+    lowered.includes('request access') ||
+    lowered.includes('sign in')
+  );
+}
+
+function findConfirmToken(html = '') {
+  const hrefToken = html.match(/confirm=([0-9A-Za-z_]+)/i);
+  if (hrefToken) return hrefToken[1];
+  const inputToken = html.match(/name="confirm"\s+value="([0-9A-Za-z_]+)"/i);
+  if (inputToken) return inputToken[1];
+  return null;
+}
+
+function logHtmlDebug(res, html) {
+  try {
+    const finalUrl = res?.request?.res?.responseUrl || res?.config?.url;
+    const snippet = html.slice(0, HTML_LOG_SLICE).replace(/\s+/g, ' ').trim();
+    console.warn('[gdrive] html response', {
+      status: res?.status,
+      url: finalUrl,
+      type: res?.headers?.['content-type'],
+      preview: snippet,
+    });
+  } catch (e) {
+    // swallow logging issues
+  }
+}
+
 async function resolveDownloadResponse(client, fileId) {
   let res = await requestDownload(client, { fileId });
   let contentDisposition = res.headers['content-disposition'] || '';
-  const initialType = res.headers['content-type'] || '';
 
-  if (initialType.includes('text/html')) {
+  if (isHtmlResponse(res)) {
     const html = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
-    const tokenMatch = html.match(/confirm=([0-9A-Za-z_]+)/i);
-    if (!tokenMatch) {
-      throw buildPermissionError();
-    }
-    const confirmToken = tokenMatch[1];
-    res = await requestDownload(client, { fileId, confirmToken });
-    contentDisposition = res.headers['content-disposition'] || contentDisposition;
-    const afterType = res.headers['content-type'] || '';
-    if (afterType.includes('text/html')) {
-      throw buildPermissionError();
+    logHtmlDebug(res, html);
+    const confirmToken = findConfirmToken(html);
+    if (confirmToken) {
+      res = await requestDownload(client, { fileId, confirmToken });
+      contentDisposition = res.headers['content-disposition'] || contentDisposition;
+      if (isHtmlResponse(res)) {
+        const htmlAfter = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
+        logHtmlDebug(res, htmlAfter);
+        if (sniffPermissionHtml(htmlAfter)) {
+          throw buildPermissionError();
+        }
+        const err = new Error('Unexpected Google Drive HTML response after confirm');
+        err.status = 400;
+        throw err;
+      }
+    } else {
+      if (sniffPermissionHtml(html)) {
+        throw buildPermissionError();
+      }
+      const err = new Error('Unexpected Google Drive HTML response. Try again or use OAuth for private files.');
+      err.status = 400;
+      throw err;
     }
   }
 
