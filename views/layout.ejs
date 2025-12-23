@@ -137,20 +137,25 @@
         <img src="/images/logo.svg" alt="StreamFlow Logo" class="w-9 h-9">
       </div>
       <div class="flex-1">
-        <a href="/dashboard" class="sidebar-icon group <%= active === 'dashboard' ? 'bg-primary' : '' %>">
+        <a href="/dashboard" class="sidebar-icon group <%= active === 'streams' ? 'bg-primary' : '' %>">
           <i class="ti ti-broadcast text-xl"></i>
           <span class="text-xs mt-1">Streams</span>
           <span class="sidebar-tooltip group-hover:scale-100">Stream Manager</span>
         </a>
-        <a href="/gallery" class="sidebar-icon group <%= active === 'gallery' ? 'bg-primary' : '' %>">
-          <i class="ti ti-video text-xl"></i>
-          <span class="text-xs mt-1">Gallery</span>
-          <span class="sidebar-tooltip group-hover:scale-100">Video Gallery</span>
+        <a href="/assets" class="sidebar-icon group <%= active === 'assets' ? 'bg-primary' : '' %>">
+          <i class="ti ti-photo text-xl"></i>
+          <span class="text-xs mt-1">Assets</span>
+          <span class="sidebar-tooltip group-hover:scale-100">Media Assets</span>
         </a>
-        <a href="/playlist" class="sidebar-icon group <%= active === 'playlist' ? 'bg-primary' : '' %>">
-          <i class="ti ti-playlist text-xl"></i>
-          <span class="text-xs mt-1">Playlist</span>
-          <span class="sidebar-tooltip group-hover:scale-100">Playlist Manager</span>
+        <a href="/destinations" class="sidebar-icon group <%= active === 'destinations' ? 'bg-primary' : '' %>">
+          <i class="ti ti-router text-xl"></i>
+          <span class="text-xs mt-1">Destinations</span>
+          <span class="sidebar-tooltip group-hover:scale-100">RTMP Targets</span>
+        </a>
+        <a href="/presets" class="sidebar-icon group <%= active === 'presets' ? 'bg-primary' : '' %>">
+          <i class="ti ti-adjustments text-xl"></i>
+          <span class="text-xs mt-1">Presets</span>
+          <span class="sidebar-tooltip group-hover:scale-100">FFmpeg Presets</span>
         </a>
         <a href="/history" class="sidebar-icon group <%= active === 'history' ? 'bg-primary' : '' %>">
           <i class="ti ti-history text-xl"></i>
@@ -249,17 +254,17 @@
   </div>
   <div class="lg:hidden fixed bottom-0 left-0 right-0 bg-dark-800 border-t border-gray-700 shadow-lg z-30">
     <nav class="flex justify-around items-center h-16">
-      <a href="/dashboard" class="bottom-nav-item <%= active === 'dashboard' ? 'bottom-nav-active' : '' %>">
+      <a href="/dashboard" class="bottom-nav-item <%= active === 'streams' ? 'bottom-nav-active' : '' %>">
         <i class="ti ti-broadcast"></i>
         <span>Streams</span>
       </a>
-      <a href="/gallery" class="bottom-nav-item <%= active === 'gallery' ? 'bottom-nav-active' : '' %>">
-        <i class="ti ti-video"></i>
-        <span>Gallery</span>
+      <a href="/assets" class="bottom-nav-item <%= active === 'assets' ? 'bottom-nav-active' : '' %>">
+        <i class="ti ti-photo"></i>
+        <span>Assets</span>
       </a>
-      <a href="/playlist" class="bottom-nav-item <%= active === 'playlist' ? 'bottom-nav-active' : '' %>">
-        <i class="ti ti-playlist"></i>
-        <span>Playlist</span>
+      <a href="/destinations" class="bottom-nav-item <%= active === 'destinations' ? 'bottom-nav-active' : '' %>">
+        <i class="ti ti-router"></i>
+        <span>Destinations</span>
       </a>
       <a href="/history" class="bottom-nav-item <%= active === 'history' ? 'bottom-nav-active' : '' %>">
         <i class="ti ti-history"></i>
