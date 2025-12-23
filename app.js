@@ -4,6 +4,7 @@ const express = require('express');
 const path = require('path');
 const engine = require('ejs-mate');
 const os = require('os');
+const { execFile } = require('child_process');
 const multer = require('multer');
 const fs = require('fs');
 const csrf = require('csrf');
@@ -14,10 +15,11 @@ const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const User = require('./models/User');
-const { db, checkIfUsersExist, initializeDatabase } = require('./db/database');
+const { db, checkIfAdminExists, initializeDatabase, getCurrentMigrationVersion, get } = require('./db/database');
 const systemMonitor = require('./services/systemMonitor');
 const { uploadVideo, upload } = require('./middleware/uploadMiddleware');
-const { ensureDirectories } = require('./utils/storage');
+const { ensureDirectories, paths } = require('./utils/storage');
+const { loadSessionSecret } = require('./utils/sessionSecret');
 const { getVideoInfo, generateThumbnail } = require('./utils/videoProcessor');
 const Video = require('./models/Video');
 const Playlist = require('./models/Playlist');
@@ -26,6 +28,21 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const streamingService = require('./services/streamingService');
 const schedulerService = require('./services/schedulerService');
+const { stopAllSessions } = require('./services/jobService');
+const { startScheduler } = require('./services/jobScheduler');
+const { startRunner } = require('./services/runnerService');
+const { startRetentionCleanup } = require('./services/retentionService');
+const { readSettings, writeSettings } = require('./services/settingsService');
+const jobsRouter = require('./routes/apiJobs');
+const schedulesRouter = require('./routes/apiSchedules');
+const sessionsRouter = require('./routes/apiSessions');
+const assetsRouter = require('./routes/apiAssets');
+const destinationsRouter = require('./routes/apiDestinations');
+const presetsRouter = require('./routes/apiPresets');
+const historyRouter = require('./routes/apiHistory');
+const settingsRouter = require('./routes/apiSettings');
+const scenesRouter = require('./routes/apiScenes');
+const swapRulesRouter = require('./routes/apiSwapRules');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('-----------------------------------');
@@ -40,10 +57,51 @@ process.on('uncaughtException', (error) => {
 });
 const app = express();
 app.set("trust proxy", 1);
-const port = process.env.PORT || 7575;
+const port = process.env.PORT || 6969;
+const { version: appVersion } = require('./package.json');
 const tokens = new csrf();
 ensureDirectories();
-ensureDirectories();
+const sessionSecret = loadSessionSecret(console);
+process.env.SESSION_SECRET = sessionSecret;
+
+let setupCompleteCache = null;
+
+async function isSetupComplete() {
+  if (setupCompleteCache !== null) {
+    return setupCompleteCache;
+  }
+  try {
+    const [adminExists, settings] = await Promise.all([
+      checkIfAdminExists(),
+      readSettings({ includeSecrets: false }),
+    ]);
+    if (adminExists && !settings.setup_completed) {
+      await writeSettings({ setup_completed: 1 });
+      setupCompleteCache = true;
+      return true;
+    }
+    setupCompleteCache = Boolean(adminExists && settings.setup_completed);
+    return setupCompleteCache;
+  } catch (err) {
+    return false;
+  }
+}
+
+function markSetupComplete() {
+  setupCompleteCache = true;
+}
+
+function isStaticDuringSetup(reqPath) {
+  return (
+    reqPath.startsWith('/images') ||
+    reqPath.startsWith('/css') ||
+    reqPath.startsWith('/js') ||
+    reqPath.startsWith('/public') ||
+    reqPath.startsWith('/favicon') ||
+    reqPath === '/sw.js' ||
+    reqPath.startsWith('/uploads')
+  );
+}
 app.locals.helpers = {
   getUsername: function (req) {
     if (req.session && req.session.username) {
@@ -113,13 +171,14 @@ app.use(session({
     dir: './db/',
     table: 'sessions'
   }),
-  secret: process.env.SESSION_SECRET,
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   rolling: true,
   cookie: {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000
   }
 }));
@@ -157,23 +216,149 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Service-Worker-Allowed', '/');
-  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
-});
-
 app.use('/uploads', function (req, res, next) {
   res.header('Cache-Control', 'no-cache');
   res.header('Pragma', 'no-cache');
   res.header('Expires', '0');
   next();
 });
+
+app.use('/uploads/avatars', express.static(paths.avatars, {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    let contentType = 'application/octet-stream';
+    if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+    else if (ext === '.png') contentType = 'image/png';
+    else if (ext === '.gif') contentType = 'image/gif';
+    res.header('Content-Type', contentType);
+    res.header('Cache-Control', 'max-age=60, must-revalidate');
+  }
+}));
+
+app.use('/uploads/videos', express.static(paths.videos));
+app.use('/uploads/thumbnails', express.static(paths.thumbnails));
+
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
 app.use(express.json({ limit: '10gb' }));
 
+app.use(async (req, res, next) => {
+  const normalizedPath = req.path || '/';
+  if (normalizedPath === '/health' || normalizedPath === '/api/health') {
+    return next();
+  }
+
+  const installed = await isSetupComplete();
+  if (installed) {
+    return next();
+  }
+
+  if (normalizedPath === '/setup') {
+    return next();
+  }
+
+  if (isStaticDuringSetup(normalizedPath)) {
+    return next();
+  }
+
+  if (normalizedPath.startsWith('/api')) {
+    return res.status(503).json({ error: 'setup_required', redirect: '/setup' });
+  }
+
+  return res.redirect('/setup');
+});
+
+async function checkFfmpegAvailable() {
+  const bin = (ffmpegInstaller && ffmpegInstaller.path) || 'ffmpeg';
+  try {
+    const { stdout } = await new Promise((resolve, reject) => {
+      execFile(bin, ['-version'], { maxBuffer: 1024 * 1024 }, (err, stdout) => {
+        if (err) return reject(err);
+        resolve({ stdout });
+      });
+    });
+    const firstLine = stdout.split('\n')[0];
+    return { ok: true, version: firstLine };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+async function checkStorageWritable() {
+  const dataRoot = process.env.DATA_DIR || '/data';
+  const probeFile = path.join(dataRoot, 'health_probe.tmp');
+  try {
+    await fs.promises.mkdir(dataRoot, { recursive: true });
+    await fs.promises.writeFile(probeFile, 'ok');
+    await fs.promises.unlink(probeFile);
+    return { ok: true, path: dataRoot };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+app.get(['/health', '/api/health'], async (req, res) => {
+  const verbose = req.query.verbose === '1' || req.query.verbose === 'true';
+  const payload = {
+    ok: true,
+    version: appVersion,
+    uptime: process.uptime(),
+    db: {
+      ok: false,
+    },
+  };
+
+  try {
+    await get('SELECT 1 as ok');
+    const migrationVersion = await getCurrentMigrationVersion();
+    payload.db = {
+      ok: true,
+      migration_version: migrationVersion,
+    };
+  } catch (error) {
+    payload.db = {
+      ok: false,
+      error: error.message,
+    };
+  }
+
+  if (verbose) {
+    payload.ffmpeg = await checkFfmpegAvailable();
+    payload.storage = await checkStorageWritable();
+  }
+
+  res.status(200).json(payload);
+});
+
+app.post('/api/stop-all', requireApiAuth, async (_req, res) => {
+  try {
+    const stopped = await stopAllSessions();
+    res.json({ stopped });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ZenStream v1 Basic APIs
+app.use('/api/jobs', requireApiAuth, jobsRouter);
+app.use('/api/schedules', requireApiAuth, schedulesRouter);
+app.use('/api/sessions', requireApiAuth, sessionsRouter);
+app.use('/api/assets', requireApiAuth, assetsRouter);
+app.use('/api/destinations', requireApiAuth, destinationsRouter);
+app.use('/api/presets', requireApiAuth, presetsRouter);
+app.use('/api/history', requireApiAuth, historyRouter);
+app.use('/api/settings', requireApiAuth, settingsRouter);
+app.use('/api/scenes', requireApiAuth, scenesRouter);
+app.use('/api/swap-rules', requireApiAuth, swapRulesRouter);
+
 const csrfProtection = function (req, res, next) {
   if ((req.path === '/login' && req.method === 'POST') ||
+    (req.path === '/setup' && req.method === 'POST') ||
     (req.path === '/setup-account' && req.method === 'POST')) {
     return next();
   }
@@ -192,6 +377,13 @@ const isAuthenticated = (req, res, next) => {
   }
   res.redirect('/login');
 };
+
+function requireApiAuth(req, res, next) {
+  if (req.session && req.session.userId) {
+    return next();
+  }
+  return res.status(401).json({ error: 'auth_required' });
+}
 
 const isAdmin = async (req, res, next) => {
   try {
@@ -251,14 +443,102 @@ const loginDelayMiddleware = async (req, res, next) => {
   await new Promise(resolve => setTimeout(resolve, 1000));
   next();
 };
+app.get('/setup', async (req, res) => {
+  const installed = await isSetupComplete();
+  if (installed) {
+    return res.redirect(req.session.userId ? '/dashboard' : '/login');
+  }
+
+  const settings = await readSettings({ includeSecrets: false });
+  res.render('setup', {
+    title: 'Setup ZenStream',
+    error: null,
+    form: {
+      username: 'admin',
+      timezone: settings.timezone || 'UTC',
+      language: settings.language || 'en',
+      retention_days: settings.retention_days || 30,
+      keep_forever: !!settings.keep_forever,
+    }
+  });
+});
+
+app.post('/setup', csrfProtection, async (req, res) => {
+  try {
+    const installed = await isSetupComplete();
+    if (installed) {
+      return res.redirect('/login');
+    }
+
+    const existingAdmin = await checkIfAdminExists();
+    if (existingAdmin) {
+      markSetupComplete();
+      return res.redirect('/login');
+    }
+
+    const username = (req.body.username || 'admin').trim();
+    const password = req.body.password || '';
+    const confirmPassword = req.body.confirmPassword || '';
+    if (!username || password.length < 8 || password !== confirmPassword) {
+      return res.render('setup', {
+        title: 'Setup ZenStream',
+        error: !username
+          ? 'Username is required'
+          : password.length < 8
+            ? 'Password must be at least 8 characters'
+            : 'Passwords do not match',
+        form: {
+          username: username || 'admin',
+          timezone: req.body.timezone || 'UTC',
+          language: req.body.language || 'en',
+          retention_days: req.body.retention_days || 30,
+          keep_forever: !!req.body.keep_forever,
+        }
+      });
+    }
+
+    const retention = Math.max(1, Math.min(3650, parseInt(req.body.retention_days, 10) || 30));
+    const keepForever = req.body.keep_forever === 'on' || req.body.keep_forever === true;
+
+    await User.create({
+      username,
+      password,
+      user_role: 'admin',
+      status: 'active'
+    });
+
+    await writeSettings({
+      timezone: req.body.timezone || 'UTC',
+      language: req.body.language || 'en',
+      retention_days: retention,
+      keep_forever: keepForever ? 1 : 0,
+      setup_completed: 1,
+    });
+    markSetupComplete();
+    return res.redirect('/login');
+  } catch (err) {
+    console.error('Setup error:', err);
+    return res.render('setup', {
+      title: 'Setup ZenStream',
+      error: 'Failed to complete setup. Please try again.',
+      form: {
+        username: req.body.username || 'admin',
+        timezone: req.body.timezone || 'UTC',
+        language: req.body.language || 'en',
+        retention_days: req.body.retention_days || 30,
+        keep_forever: !!req.body.keep_forever,
+      }
+    });
+  }
+});
 app.get('/login', async (req, res) => {
   if (req.session.userId) {
     return res.redirect('/dashboard');
   }
   try {
-    const usersExist = await checkIfUsersExist();
-    if (!usersExist) {
-      return res.redirect('/setup-account');
+    const installed = await isSetupComplete();
+    if (!installed) {
+      return res.redirect('/setup');
     }
     res.render('login', {
       title: 'Login',
@@ -315,237 +595,67 @@ app.get('/logout', (req, res) => {
   res.redirect('/login');
 });
 
-app.get('/signup', async (req, res) => {
-  if (req.session.userId) {
-    return res.redirect('/dashboard');
-  }
-  try {
-    const usersExist = await checkIfUsersExist();
-    if (!usersExist) {
-      return res.redirect('/setup-account');
-    }
-    res.render('signup', {
-      title: 'Sign Up',
-      error: null,
-      success: null
-    });
-  } catch (error) {
-    console.error('Error loading signup page:', error);
-    res.render('signup', {
-      title: 'Sign Up',
-      error: 'System error. Please try again.',
-      success: null
-    });
-  }
+app.get('/signup', (_req, res) => {
+  res.redirect('/login');
 });
 
-app.post('/signup', upload.single('avatar'), async (req, res) => {
-  const { username, password, confirmPassword, user_role, status } = req.body;
-  
-  try {
-    if (!username || !password) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Username and password are required',
-        success: null
-      });
-    }
-
-    if (password !== confirmPassword) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Passwords do not match',
-        success: null
-      });
-    }
-
-    if (password.length < 6) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Password must be at least 6 characters long',
-        success: null
-      });
-    }
-
-    const existingUser = await User.findByUsername(username);
-    if (existingUser) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Username already exists',
-        success: null
-      });
-    }
-
-    let avatarPath = null;
-    if (req.file) {
-      avatarPath = `/uploads/avatars/${req.file.filename}`;
-    }
-
-    const newUser = await User.create({
-      username,
-      password,
-      avatar_path: avatarPath,
-      user_role: user_role || 'member',
-      status: status || 'inactive'
-    });
-
-    if (newUser) {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: null,
-        success: 'Account created successfully! Please wait for admin approval to activate your account.'
-      });
-    } else {
-      return res.render('signup', {
-        title: 'Sign Up',
-        error: 'Failed to create account. Please try again.',
-        success: null
-      });
-    }
-  } catch (error) {
-    console.error('Signup error:', error);
-    return res.render('signup', {
-      title: 'Sign Up',
-      error: 'An error occurred during registration. Please try again.',
-      success: null
-    });
-  }
+app.post('/signup', (_req, res) => {
+  res.status(403).render('login', {
+    title: 'Login',
+    error: 'Signup is disabled. Please log in with your administrator account.'
+  });
 });
 
-app.get('/setup-account', async (req, res) => {
-  try {
-    const usersExist = await checkIfUsersExist();
-    if (usersExist && !req.session.userId) {
-      return res.redirect('/login');
-    }
-    if (req.session.userId) {
-      const user = await User.findById(req.session.userId);
-      if (user && user.username) {
-        return res.redirect('/dashboard');
-      }
-    }
-    res.render('setup-account', {
-      title: 'Complete Your Account',
-      user: req.session.userId ? await User.findById(req.session.userId) : {},
-      error: null
-    });
-  } catch (error) {
-    console.error('Setup account error:', error);
-    res.redirect('/login');
-  }
-});
-app.post('/setup-account', upload.single('avatar'), [
-  body('username')
-    .trim()
-    .isLength({ min: 3, max: 20 })
-    .withMessage('Username must be between 3 and 20 characters')
-    .matches(/^[a-zA-Z0-9_]+$/)
-    .withMessage('Username can only contain letters, numbers, and underscores'),
-  body('password')
-    .isLength({ min: 8 })
-    .withMessage('Password must be at least 8 characters long')
-    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
-    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
-    .matches(/[0-9]/).withMessage('Password must contain at least one number'),
-  body('confirmPassword')
-    .custom((value, { req }) => value === req.body.password)
-    .withMessage('Passwords do not match')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      console.log('Validation errors:', errors.array());
-      return res.render('setup-account', {
-        title: 'Complete Your Account',
-        user: { username: req.body.username || '' },
-        error: errors.array()[0].msg
-      });
-    }
-    const existingUsername = await User.findByUsername(req.body.username);
-    if (existingUsername) {
-      return res.render('setup-account', {
-        title: 'Complete Your Account',
-        user: { email: req.body.email || '' },
-        error: 'Username is already taken'
-      });
-    }
-    const avatarPath = req.file ? `/uploads/avatars/${req.file.filename}` : null;
-    const usersExist = await checkIfUsersExist();
-    if (!usersExist) {
-      try {
-        const user = await User.create({
-          username: req.body.username,
-          password: req.body.password,
-          avatar_path: avatarPath,
-          user_role: 'admin',
-          status: 'active'
-        });
-        req.session.userId = user.id;
-        req.session.username = req.body.username;
-        req.session.user_role = user.user_role;
-        if (avatarPath) {
-          req.session.avatar_path = avatarPath;
-        }
-        console.log('Setup account - Using user ID from database:', user.id);
-        console.log('Setup account - Session userId set to:', req.session.userId);
-        return res.redirect('/dashboard');
-      } catch (error) {
-        console.error('User creation error:', error);
-        return res.render('setup-account', {
-          title: 'Complete Your Account',
-          user: {},
-          error: 'Failed to create user. Please try again.'
-        });
-      }
-    } else {
-      await User.update(req.session.userId, {
-        username: req.body.username,
-        password: req.body.password,
-        avatar_path: avatarPath,
-      });
-      req.session.username = req.body.username;
-      if (avatarPath) {
-        req.session.avatar_path = avatarPath;
-      }
-      res.redirect('/dashboard');
-    }
-  } catch (error) {
-    console.error('Account setup error:', error);
-    res.render('setup-account', {
-      title: 'Complete Your Account',
-      user: { email: req.body.email || '' },
-      error: 'An error occurred. Please try again.'
-    });
-  }
-});
+app.get('/setup-account', (_req, res) => res.redirect('/setup'));
+app.post('/setup-account', (_req, res) => res.redirect('/setup'));
 app.get('/', (req, res) => {
   res.redirect('/dashboard');
 });
 app.get('/dashboard', isAuthenticated, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
-    res.render('dashboard', {
-      title: 'Dashboard',
-      active: 'dashboard',
-      user: user
+    res.render('streams', {
+      title: 'Streams',
+      active: 'streams',
+      user,
     });
   } catch (error) {
     console.error('Dashboard error:', error);
     res.redirect('/login');
   }
 });
-app.get('/gallery', isAuthenticated, async (req, res) => {
+
+app.get('/streams', isAuthenticated, (_req, res) => {
+  res.redirect('/dashboard');
+});
+
+app.get('/assets', isAuthenticated, async (req, res) => {
   try {
-    const videos = await Video.findAll(req.session.userId);
-    res.render('gallery', {
-      title: 'Video Gallery',
-      active: 'gallery',
-      user: await User.findById(req.session.userId),
-      videos: videos
-    });
+    const user = await User.findById(req.session.userId);
+    res.render('assets', { title: 'Assets', active: 'assets', user });
   } catch (error) {
-    console.error('Gallery error:', error);
-    res.redirect('/dashboard');
+    console.error('Assets error:', error);
+    res.redirect('/login');
+  }
+});
+
+app.get('/destinations', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    res.render('destinations', { title: 'Destinations', active: 'destinations', user });
+  } catch (error) {
+    console.error('Destinations error:', error);
+    res.redirect('/login');
+  }
+});
+
+app.get('/presets', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    res.render('presets', { title: 'Presets', active: 'presets', user });
+  } catch (error) {
+    console.error('Presets error:', error);
+    res.redirect('/login');
   }
 });
 app.get('/settings', isAuthenticated, async (req, res) => {
@@ -567,78 +677,11 @@ app.get('/settings', isAuthenticated, async (req, res) => {
 });
 app.get('/history', isAuthenticated, async (req, res) => {
   try {
-    const db = require('./db/database').db;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const sort = req.query.sort === 'oldest' ? 'ASC' : 'DESC';
-    const platform = req.query.platform || 'all';
-    const search = req.query.search || '';
-    const offset = (page - 1) * limit;
-
-    let whereClause = 'WHERE h.user_id = ?';
-    const params = [req.session.userId];
-
-    if (platform !== 'all') {
-      whereClause += ' AND h.platform = ?';
-      params.push(platform);
-    }
-
-    if (search) {
-      whereClause += ' AND h.title LIKE ?';
-      params.push(`%${search}%`);
-    }
-
-    const totalCount = await new Promise((resolve, reject) => {
-      db.get(
-        `SELECT COUNT(*) as count FROM stream_history h ${whereClause}`,
-        params,
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row.count);
-        }
-      );
-    });
-
-    const history = await new Promise((resolve, reject) => {
-      db.all(
-        `SELECT h.*, v.thumbnail_path 
-         FROM stream_history h 
-         LEFT JOIN videos v ON h.video_id = v.id 
-         ${whereClause}
-         ORDER BY h.start_time ${sort}
-         LIMIT ? OFFSET ?`,
-        [...params, limit, offset],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
-
-    const totalPages = Math.ceil(totalCount / limit);
-
-    res.render('history', {
-      active: 'history',
-      title: 'Stream History',
-      history: history,
-      helpers: app.locals.helpers,
-      pagination: {
-        page,
-        limit,
-        totalCount,
-        totalPages,
-        sort: req.query.sort || 'newest',
-        platform,
-        search
-      }
-    });
+    const user = await User.findById(req.session.userId);
+    res.render('history', { title: 'History', active: 'history', user });
   } catch (error) {
-    console.error('Error fetching stream history:', error);
-    res.status(500).render('error', {
-      title: 'Error',
-      message: 'Failed to load stream history',
-      error: error
-    });
+    console.error('History error:', error);
+    res.redirect('/dashboard');
   }
 });
 app.delete('/api/history/:id', isAuthenticated, async (req, res) => {
@@ -1349,12 +1392,11 @@ app.post('/api/videos/upload', isAuthenticated, (req, res, next) => {
         }
         const thumbnailFilename = `thumb-${path.parse(req.file.filename).name}.jpg`;
         const thumbnailPath = `/uploads/thumbnails/${thumbnailFilename}`;
-        const fullThumbnailPath = path.join(__dirname, 'public', thumbnailPath);
         ffmpeg(fullFilePath)
           .screenshots({
             timestamps: ['10%'],
             filename: thumbnailFilename,
-            folder: path.join(__dirname, 'public', 'uploads', 'thumbnails'),
+            folder: paths.thumbnails,
             size: '854x480'
           })
           .on('end', async () => {
@@ -2339,7 +2381,7 @@ app.put('/api/playlists/:id/videos/reorder', isAuthenticated, [
   }
 });
 
-app.get('/api/server-time', (req, res) => {
+app.get('/api/server-time', requireApiAuth, (req, res) => {
   const now = new Date();
   const day = String(now.getDate()).padStart(2, '0');
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -2354,42 +2396,61 @@ app.get('/api/server-time', (req, res) => {
     formattedTime: formattedTime
   });
 });
-const server = app.listen(port, '0.0.0.0', async () => {
+
+let server;
+async function startServer() {
   try {
     await initializeDatabase();
+    server = app.listen(port, '0.0.0.0', async () => {
+      const ipAddresses = getLocalIpAddresses();
+      console.log(`StreamFlow running at:`);
+      if (ipAddresses && ipAddresses.length > 0) {
+        ipAddresses.forEach(ip => {
+          console.log(`  http://${ip}:${port}`);
+        });
+      } else {
+        console.log(`  http://localhost:${port}`);
+      }
+      try {
+        const streams = await Stream.findAll(null, 'live');
+        if (streams && streams.length > 0) {
+          console.log(`Resetting ${streams.length} live streams to offline state...`);
+          for (const stream of streams) {
+            await Stream.updateStatus(stream.id, 'offline');
+          }
+        }
+      } catch (error) {
+        console.error('Error resetting stream statuses:', error);
+      }
+      schedulerService.init(streamingService);
+      try {
+        await streamingService.syncStreamStatuses();
+      } catch (error) {
+        console.error('Failed to sync stream statuses:', error);
+      }
+      try {
+        await startScheduler();
+      } catch (error) {
+        console.error('Failed to start basic scheduler:', error);
+      }
+      try {
+        await startRunner();
+      } catch (error) {
+        console.error('Failed to start runner:', error);
+      }
+      try {
+        await startRetentionCleanup();
+      } catch (error) {
+        console.error('Failed to start retention cleanup:', error);
+      }
+    });
+    server.timeout = 30 * 60 * 1000;
+    server.keepAliveTimeout = 30 * 60 * 1000;
+    server.headersTimeout = 30 * 60 * 1000;
   } catch (error) {
     console.error('Failed to initialize database:', error);
     process.exit(1);
   }
-  
-  const ipAddresses = getLocalIpAddresses();
-  console.log(`StreamFlow running at:`);
-  if (ipAddresses && ipAddresses.length > 0) {
-    ipAddresses.forEach(ip => {
-      console.log(`  http://${ip}:${port}`);
-    });
-  } else {
-    console.log(`  http://localhost:${port}`);
-  }
-  try {
-    const streams = await Stream.findAll(null, 'live');
-    if (streams && streams.length > 0) {
-      console.log(`Resetting ${streams.length} live streams to offline state...`);
-      for (const stream of streams) {
-        await Stream.updateStatus(stream.id, 'offline');
-      }
-    }
-  } catch (error) {
-    console.error('Error resetting stream statuses:', error);
-  }
-  schedulerService.init(streamingService);
-  try {
-    await streamingService.syncStreamStatuses();
-  } catch (error) {
-    console.error('Failed to sync stream statuses:', error);
-  }
-});
+}
 
-server.timeout = 30 * 60 * 1000;
-server.keepAliveTimeout = 30 * 60 * 1000;
-server.headersTimeout = 30 * 60 * 1000;
+startServer();
