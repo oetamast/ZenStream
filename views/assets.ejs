@@ -1,0 +1,360 @@
+<% layout('layout') -%>
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Assets</h1>
+    <p class="text-gray-400 text-sm">Upload or import media to use in streams.</p>
+  </div>
+  <div class="flex gap-2">
+    <input id="assetQuery" placeholder="Search filename" class="bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+    <select id="assetFilter" class="bg-dark-700 border border-gray-600 rounded px-3 py-2">
+      <option value="">All</option>
+      <option value="video">Video</option>
+      <option value="audio">Audio</option>
+      <option value="sfx">SFX</option>
+    </select>
+    <button id="refreshAssets" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Refresh</button>
+  </div>
+</div>
+
+<div class="bg-dark-800 border border-gray-700 rounded-lg p-4 mb-6">
+  <h2 class="font-semibold mb-3">Upload asset</h2>
+  <div class="grid md:grid-cols-3 gap-4">
+    <div>
+      <label class="block text-sm mb-1">File</label>
+      <input id="assetFile" type="file" class="w-full text-sm" />
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Type</label>
+      <select id="assetType" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2">
+        <option value="video">Video</option>
+        <option value="audio">Audio</option>
+        <option value="sfx">SFX</option>
+      </select>
+    </div>
+    <div class="flex items-end">
+      <button id="uploadAsset" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Upload</button>
+    </div>
+  </div>
+  <p class="text-xs text-gray-400 mt-2">Max 500MB. Thumbnails are generated for video files.</p>
+  <p id="assetError" class="text-red-400 text-sm mt-2 hidden"></p>
+</div>
+
+<div class="bg-dark-800 border border-gray-700 rounded-lg p-4 mb-6">
+  <div class="flex items-center justify-between mb-3">
+    <div>
+      <h2 class="font-semibold">Google Drive import</h2>
+      <p class="text-gray-400 text-sm">Public share links work without OAuth. Connect for private files.</p>
+    </div>
+    <span id="driveStatusBadge" class="text-xs text-gray-400">Checking...</span>
+  </div>
+  <div class="flex flex-wrap gap-3">
+    <button id="driveAuthBtn" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Connect Google Drive</button>
+    <button id="openDriveImport" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Import from Google Drive</button>
+    <button id="refreshDriveStatus" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Refresh status</button>
+  </div>
+  <p class="text-xs text-gray-500 mt-2">Set client ID/secret in Settings if you need to pull private Drive files. Tokens are stored encrypted.</p>
+  <p id="driveStatusMsg" class="text-sm mt-2 hidden"></p>
+</div>
+
+<div id="assetsEmpty" class="hidden text-gray-400 text-sm">No assets found.</div>
+<div id="assetsGrid" class="grid md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+
+<div id="assetDeleteModal" class="hidden fixed inset-0 bg-black/70 z-40 items-center justify-center p-4">
+  <div class="bg-dark-800 border border-gray-700 rounded-lg w-full max-w-lg p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-semibold">Delete asset</h3>
+      <button id="closeAssetDelete" class="text-gray-400 hover:text-white"><i class="ti ti-x"></i></button>
+    </div>
+    <p class="text-sm text-red-300">Deleting this asset will disable impacted streams until you pick another asset.</p>
+    <div class="bg-dark-700 border border-gray-600 rounded p-2 max-h-40 overflow-auto text-sm" id="assetImpactList"></div>
+    <label class="inline-flex items-center gap-2 text-sm">
+      <input type="checkbox" id="assetDeleteConfirm" class="accent-primary" />
+      I understand and want to delete this asset.
+    </label>
+    <p id="assetDeleteError" class="hidden text-red-400 text-sm"></p>
+    <div class="flex justify-end gap-3">
+      <button id="cancelAssetDelete" class="bg-gray-700 text-white px-4 py-2 rounded">Cancel</button>
+      <button id="confirmAssetDelete" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="driveImportModal" class="hidden fixed inset-0 bg-black/70 z-40 items-center justify-center p-4">
+  <div class="bg-dark-800 border border-gray-700 rounded-lg w-full max-w-lg p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-semibold">Import from Google Drive</h3>
+      <button id="closeDriveImport" class="text-gray-400 hover:text-white"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm mb-1">Share link or File ID</label>
+        <input id="driveImportLink" type="text" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="https://drive.google.com/file/d/..." />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Asset type</label>
+        <select id="driveImportType" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2">
+          <option value="video">Video</option>
+          <option value="audio">Audio</option>
+          <option value="sfx">SFX</option>
+        </select>
+      </div>
+      <p id="driveImportStatus" class="text-sm text-gray-300"></p>
+      <p id="driveImportError" class="text-sm text-red-400 hidden"></p>
+    </div>
+    <div class="flex justify-end gap-3">
+      <button id="cancelDriveImport" class="bg-gray-700 text-white px-4 py-2 rounded">Cancel</button>
+      <button id="confirmDriveImport" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Start import</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const assetsGrid = document.getElementById('assetsGrid');
+  const assetsEmpty = document.getElementById('assetsEmpty');
+
+  async function fetchJson(url, options) {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.message || 'Request failed');
+    }
+    return res.json();
+  }
+
+  async function loadAssets() {
+    const params = new URLSearchParams();
+    const filter = document.getElementById('assetFilter').value;
+    const query = document.getElementById('assetQuery').value;
+    if (filter) params.set('type', filter);
+    if (query) params.set('query', query);
+    const data = await fetchJson('/api/assets' + (params.toString() ? `?${params}` : ''));
+    const assets = data.assets || [];
+    assetsEmpty.classList.toggle('hidden', assets.length > 0);
+    assetsGrid.innerHTML = assets.map(renderAsset).join('');
+  }
+
+  function setDriveStatusText(status) {
+    driveStatus = status || { configured: false, connected: false };
+    if (driveStatus.connected) {
+      driveStatusBadge.textContent = 'Drive connected';
+      driveStatusBadge.className = 'text-xs text-green-400';
+    } else if (driveStatus.configured) {
+      driveStatusBadge.textContent = 'Configured (authorize to import)';
+      driveStatusBadge.className = 'text-xs text-amber-300';
+    } else {
+      driveStatusBadge.textContent = 'Not configured';
+      driveStatusBadge.className = 'text-xs text-gray-400';
+    }
+  }
+
+  async function refreshDriveStatus() {
+    try {
+      const status = await fetchJson('/api/assets/google-drive/auth/status');
+      setDriveStatusText(status);
+      driveStatusMsg.classList.add('hidden');
+    } catch (err) {
+      setDriveStatusText(null);
+      driveStatusMsg.textContent = 'Unable to read Google Drive status';
+      driveStatusMsg.classList.remove('hidden');
+      driveStatusMsg.classList.add('text-red-400');
+    }
+  }
+
+  async function startDriveAuth() {
+    driveStatusMsg.classList.add('hidden');
+    try {
+      const data = await fetchJson('/api/assets/google-drive/auth/start', { method: 'POST' });
+      window.open(data.authUrl, '_blank');
+      driveStatusMsg.textContent = 'Complete the Google prompt, then click Refresh status.';
+      driveStatusMsg.classList.remove('hidden', 'text-red-400');
+      driveStatusMsg.classList.add('text-gray-300');
+    } catch (err) {
+      driveStatusMsg.textContent = err.message;
+      driveStatusMsg.classList.remove('hidden');
+      driveStatusMsg.classList.add('text-red-400');
+    }
+  }
+
+  function openDriveImportModal() {
+    driveImportError.classList.add('hidden');
+    driveImportStatus.textContent = 'Paste a Drive public share link or file id to import.';
+    driveImportModal.classList.remove('hidden');
+  }
+
+  function closeDriveImportModal() {
+    driveImportModal.classList.add('hidden');
+  }
+
+  async function pollDriveImport(importId) {
+    try {
+      const status = await fetchJson(`/api/assets/google-drive/status/${importId}`);
+      if (status.status === 'completed') {
+        driveImportStatus.textContent = 'Import complete';
+        closeDriveImportModal();
+        await loadAssets();
+        return;
+      }
+      if (status.status === 'failed') {
+        driveImportError.textContent = status.error || 'Import failed';
+        driveImportError.classList.remove('hidden');
+        driveImportStatus.textContent = '';
+        return;
+      }
+      const progress = status.progress ? ` (${status.progress}% )` : '';
+      driveImportStatus.textContent = `${status.status || 'pending'}${progress}`;
+      setTimeout(() => pollDriveImport(importId), 2000);
+    } catch (err) {
+      driveImportError.textContent = err.message;
+      driveImportError.classList.remove('hidden');
+    }
+  }
+
+  async function startDriveImport() {
+    driveImportError.classList.add('hidden');
+    driveImportStatus.textContent = 'Starting import...';
+    try {
+      const payload = {
+        share_url: driveImportLink.value,
+        asset_type: driveImportType.value,
+      };
+      const data = await fetchJson('/api/assets/google-drive/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (data.import_id) {
+        pollDriveImport(data.import_id);
+      }
+    } catch (err) {
+      driveImportError.textContent = err.message;
+      driveImportError.classList.remove('hidden');
+      driveImportStatus.textContent = '';
+    }
+  }
+
+  function safeMeta(raw) {
+    if (!raw) return {};
+    if (typeof raw === 'object') return raw;
+    try { return JSON.parse(raw); } catch (e) { return {}; }
+  }
+
+  function renderAsset(asset) {
+    const meta = safeMeta(asset.metadata_json);
+    const durationLabel = meta.format?.duration || meta.duration;
+    return `<div class="bg-dark-800 border border-gray-700 rounded-lg p-3 flex gap-3">
+      <div class="w-28 h-20 bg-dark-700 rounded overflow-hidden flex items-center justify-center">
+        ${asset.thumbnail_path ? `<img src="/api/assets/${asset.id}/thumbnail" class="object-cover w-full h-full" />` : '<span class="text-gray-500 text-xs">No thumbnail</span>'}
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold">${asset.filename}</div>
+        <div class="text-xs text-gray-400">${asset.type} • ${((asset.size_bytes || 0)/1_000_000).toFixed(1)} MB</div>
+        ${durationLabel ? `<div class="text-xs text-gray-400">Duration: ${Number(durationLabel).toFixed(1)}s</div>` : ''}
+        <div class="text-xs text-gray-500">Created: ${new Date(asset.created_at).toLocaleString()}</div>
+        <div class="mt-2 flex gap-2">
+          <button class="text-sm text-blue-400" onclick="analyzeAsset('${asset.id}')">Analyze</button>
+          <button class="text-sm text-red-400" onclick="openAssetDelete('${asset.id}', '${asset.filename}')">Delete</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  async function analyzeAsset(id) {
+    await fetchJson(`/api/assets/${id}/analyze`, { method: 'POST' });
+    await loadAssets();
+  }
+
+  async function uploadAsset() {
+    assetError.classList.add('hidden');
+    const file = document.getElementById('assetFile').files[0];
+    if (!file) {
+      assetError.textContent = 'Choose a file first';
+      assetError.classList.remove('hidden');
+      return;
+    }
+    const type = document.getElementById('assetType').value;
+    const form = new FormData();
+    form.append('file', file);
+    form.append('asset_type', type);
+    try {
+      await fetchJson('/api/assets/upload', { method: 'POST', body: form });
+      document.getElementById('assetFile').value = '';
+      await loadAssets();
+    } catch (err) {
+      assetError.textContent = err.message;
+      assetError.classList.remove('hidden');
+    }
+  }
+
+  document.getElementById('uploadAsset').onclick = uploadAsset;
+  document.getElementById('refreshAssets').onclick = loadAssets;
+  document.getElementById('assetQuery').oninput = () => loadAssets();
+  document.getElementById('assetFilter').onchange = () => loadAssets();
+
+  const assetDeleteModal = document.getElementById('assetDeleteModal');
+  let assetDeleteTarget = null;
+
+  const driveStatusBadge = document.getElementById('driveStatusBadge');
+  const driveStatusMsg = document.getElementById('driveStatusMsg');
+  const driveAuthBtn = document.getElementById('driveAuthBtn');
+  const openDriveImportBtn = document.getElementById('openDriveImport');
+  const refreshDriveStatusBtn = document.getElementById('refreshDriveStatus');
+  const driveImportModal = document.getElementById('driveImportModal');
+  const driveImportLink = document.getElementById('driveImportLink');
+  const driveImportType = document.getElementById('driveImportType');
+  const driveImportStatus = document.getElementById('driveImportStatus');
+  const driveImportError = document.getElementById('driveImportError');
+  const confirmDriveImportBtn = document.getElementById('confirmDriveImport');
+  const cancelDriveImportBtn = document.getElementById('cancelDriveImport');
+  const closeDriveImportBtn = document.getElementById('closeDriveImport');
+  let driveStatus = { configured: false, connected: false };
+
+  async function openAssetDelete(id) {
+    assetDeleteTarget = id;
+    document.getElementById('assetDeleteConfirm').checked = false;
+    document.getElementById('assetDeleteError').classList.add('hidden');
+    const listEl = document.getElementById('assetImpactList');
+    listEl.innerHTML = 'Loading impacted streams...';
+    assetDeleteModal.classList.remove('hidden');
+    const data = await fetchJson(`/api/assets/${id}/impacted-jobs`).catch(() => ({ impacted_jobs: [], total: 0 }));
+    const items = data.impacted_jobs || [];
+    const extra = data.total && data.total > items.length ? data.total - items.length : 0;
+    listEl.innerHTML = items.length
+      ? `<ul class="list-disc list-inside space-y-1">${items.map((j) => `<li>${j.name}</li>`).join('')}</ul>${extra ? `<div class=\"text-xs text-gray-400 mt-1\">+${extra} more</div>` : ''}`
+      : '<div class="text-gray-400 text-sm">No impacted streams.</div>';
+  }
+
+  async function confirmAssetDelete() {
+    const checkbox = document.getElementById('assetDeleteConfirm');
+    const errorEl = document.getElementById('assetDeleteError');
+    if (!checkbox.checked) {
+      errorEl.textContent = 'Please acknowledge the warning to delete this asset.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    try {
+      await fetchJson(`/api/assets/${assetDeleteTarget}?force=true`, { method: 'DELETE' });
+      assetDeleteModal.classList.add('hidden');
+      await loadAssets();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove('hidden');
+    }
+  }
+
+  document.getElementById('confirmAssetDelete').onclick = confirmAssetDelete;
+  document.getElementById('cancelAssetDelete').onclick = () => assetDeleteModal.classList.add('hidden');
+  document.getElementById('closeAssetDelete').onclick = () => assetDeleteModal.classList.add('hidden');
+
+  driveAuthBtn.onclick = startDriveAuth;
+  openDriveImportBtn.onclick = () => {
+    driveStatusMsg.classList.add('hidden');
+    openDriveImportModal();
+  };
+  refreshDriveStatusBtn.onclick = refreshDriveStatus;
+  confirmDriveImportBtn.onclick = startDriveImport;
+  cancelDriveImportBtn.onclick = closeDriveImportModal;
+  closeDriveImportBtn.onclick = closeDriveImportModal;
+
+  loadAssets();
+  refreshDriveStatus();
+</script>
