@@ -7,12 +7,14 @@ const {
   handleUploadedFile,
   listAssets,
   analyzeAssetById,
-  importFromGoogleDrive,
+  startGoogleDriveImport,
   listImpactedJobsForAsset,
   deleteAsset,
+  getGoogleImportStatus,
 } = require('../services/assetService');
 const { getUniqueFilename, dataRoot } = require('../utils/storage');
 const { AssetsRepository } = require('../db/repositories');
+const googleDriveService = require('../services/googleDriveService');
 
 const router = express.Router();
 const tempDir = path.join(dataRoot, 'tmp/assets');
@@ -68,18 +70,62 @@ router.post('/upload', (req, res) => {
   });
 });
 
-router.post('/import/google-drive', async (req, res) => {
+router.get('/google-drive/auth/status', async (req, res) => {
   try {
-    const { share_url, asset_type } = req.body;
-    if (!share_url || !asset_type) {
-      return res.status(400).json({ message: 'share_url and asset_type are required' });
-    }
-    const asset = await importFromGoogleDrive(share_url, asset_type);
-    res.json({ asset });
+    const status = await googleDriveService.authStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load Google Drive status' });
+  }
+});
+
+router.post('/google-drive/auth/start', async (req, res) => {
+  try {
+    const result = await googleDriveService.startAuth(req);
+    res.json(result);
   } catch (err) {
     const status = err.status || 500;
-    res.status(status).json({ message: status === 500 ? 'Google Drive import failed' : err.message });
+    res.status(status).json({ message: err.message || 'Failed to start Google OAuth' });
   }
+});
+
+router.get('/google-drive/auth/callback', async (req, res) => {
+  try {
+    await googleDriveService.handleAuthCallback(req);
+    res.send(`Google Drive connected. You can close this window and return to ZenStream.`);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).send(err.message || 'Failed to complete Google OAuth');
+  }
+});
+
+router.get('/google-drive/files', async (req, res) => {
+  try {
+    const files = await googleDriveService.listFiles({ query: req.query.query });
+    res.json({ files });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ message: err.message || 'Failed to list Google Drive files' });
+  }
+});
+
+async function handleDriveImport(req, res) {
+  try {
+    const { share_url, file_id, asset_type } = req.body;
+    const result = await startGoogleDriveImport({ shareUrl: share_url, fileId: file_id, assetType: asset_type });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ message: err.message || 'Google Drive import failed' });
+  }
+}
+
+router.post('/google-drive/import', handleDriveImport);
+router.post('/import/google-drive', handleDriveImport);
+
+router.get('/google-drive/status/:id', (req, res) => {
+  const status = getGoogleImportStatus(req.params.id);
+  res.json(status);
 });
 
 router.post('/:id/analyze', async (req, res) => {

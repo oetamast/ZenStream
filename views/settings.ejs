@@ -113,6 +113,33 @@
       </div>
     </div>
   </div>
+  <div class="mt-6 border-t border-gray-700 pt-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="font-semibold">Google Drive</h2>
+        <p class="text-gray-400 text-sm">Save OAuth client details to import assets from Drive.</p>
+      </div>
+      <p id="googleStatus" class="text-sm text-gray-400">Status: not configured</p>
+    </div>
+    <div class="grid md:grid-cols-3 gap-4 mt-3">
+      <div>
+        <label class="block text-sm mb-1">Client ID</label>
+        <input id="googleClientId" type="text" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Client secret</label>
+        <input id="googleClientSecret" type="password" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="Stored securely" />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Redirect URL</label>
+        <input id="googleRedirect" type="text" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="http://<host>:6969/api/assets/google-drive/auth/callback" />
+      </div>
+    </div>
+    <div class="flex items-center gap-3 mt-3">
+      <button id="startGoogleAuth" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Connect Google Drive</button>
+      <p class="text-xs text-gray-500">Save client credentials first, then launch OAuth. Tokens are encrypted at rest.</p>
+    </div>
+  </div>
   <div class="mt-4 flex items-center justify-between">
     <div class="text-gray-500 text-sm">Retention and Telegram settings are saved together.</div>
     <button id="saveSettings" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Save</button>
@@ -133,6 +160,11 @@
   const telegramEventsWrap = document.getElementById('telegramEvents');
   const telegramMsg = document.getElementById('telegramMsg');
   const toggleTokenBtn = document.getElementById('toggleToken');
+  const googleClientId = document.getElementById('googleClientId');
+  const googleClientSecret = document.getElementById('googleClientSecret');
+  const googleRedirect = document.getElementById('googleRedirect');
+  const googleStatus = document.getElementById('googleStatus');
+  const googleAuthBtn = document.getElementById('startGoogleAuth');
   const EVENT_LABELS = {
     stream_start: 'Stream start',
     stream_stop: 'Stream stop (manual)',
@@ -159,6 +191,36 @@
     return res.json();
   }
 
+  function setGoogleStatusText(status) {
+    if (!status) {
+      googleStatus.textContent = 'Status: not configured';
+      googleStatus.className = 'text-sm text-gray-400';
+      return;
+    }
+    const parts = [];
+    if (status.connected) {
+      parts.push('Connected');
+      googleStatus.className = 'text-sm text-green-400';
+    } else if (status.configured) {
+      parts.push('Configured');
+      googleStatus.className = 'text-sm text-amber-300';
+    } else {
+      parts.push('Not configured');
+      googleStatus.className = 'text-sm text-gray-400';
+    }
+    if (status.redirect_uri) parts.push(`Redirect: ${status.redirect_uri}`);
+    googleStatus.textContent = `Status: ${parts.join(' • ')}`;
+  }
+
+  async function refreshGoogleStatus() {
+    try {
+      const status = await fetchJson('/api/assets/google-drive/auth/status');
+      setGoogleStatusText(status);
+    } catch (err) {
+      setGoogleStatusText(null);
+    }
+  }
+
   async function loadSettings() {
     const data = await fetchJson('/api/settings');
     const s = data.settings || {};
@@ -174,6 +236,11 @@
     telegramToken.placeholder = s.telegram_bot_token_masked || '';
     telegramEventsState = s.telegram_events || {};
     renderEventToggles();
+    googleClientId.value = s.google_client_id || '';
+    googleClientSecret.value = '';
+    googleClientSecret.placeholder = s.google_client_secret_masked || 'Stored securely';
+    googleRedirect.value = s.google_redirect_uri || '';
+    setGoogleStatusText({ configured: Boolean(s.google_client_id && s.google_client_secret_masked), connected: Boolean(s.google_refresh_token_present), redirect_uri: s.google_redirect_uri });
   }
 
   async function saveSettings() {
@@ -193,6 +260,9 @@
           telegram_chat_id: telegramChat.value,
           telegram_bot_token: telegramToken.value || undefined,
           telegram_events: telegramEventsState,
+          google_client_id: googleClientId.value,
+          google_client_secret: googleClientSecret.value || undefined,
+          google_redirect_uri: googleRedirect.value,
         }),
       });
       msg.textContent = 'Saved';
@@ -200,6 +270,8 @@
       msg.classList.remove('text-red-400');
       msg.classList.add('text-green-400');
       telegramToken.value = '';
+      googleClientSecret.value = '';
+      refreshGoogleStatus();
     } catch (err) {
       msg.textContent = err.message;
       msg.classList.remove('hidden');
@@ -255,7 +327,21 @@
     telegramMsg.classList.remove('hidden');
   });
 
+  googleAuthBtn.addEventListener('click', async () => {
+    googleStatus.textContent = 'Status: launching browser flow...';
+    try {
+      const data = await fetchJson('/api/assets/google-drive/auth/start', { method: 'POST' });
+      window.open(data.authUrl, '_blank');
+      googleStatus.textContent = 'Status: waiting for OAuth completion...';
+      setTimeout(refreshGoogleStatus, 5000);
+    } catch (err) {
+      googleStatus.textContent = `Status: ${err.message}`;
+      googleStatus.className = 'text-sm text-red-400';
+    }
+  });
+
   document.getElementById('saveSettings').onclick = saveSettings;
   forever.addEventListener('change', updateRetentionState);
   loadSettings();
+  refreshGoogleStatus();
 </script>

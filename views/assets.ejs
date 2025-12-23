@@ -39,6 +39,23 @@
   <p id="assetError" class="text-red-400 text-sm mt-2 hidden"></p>
 </div>
 
+<div class="bg-dark-800 border border-gray-700 rounded-lg p-4 mb-6">
+  <div class="flex items-center justify-between mb-3">
+    <div>
+      <h2 class="font-semibold">Google Drive import</h2>
+      <p class="text-gray-400 text-sm">Connect with OAuth and import a Drive file directly.</p>
+    </div>
+    <span id="driveStatusBadge" class="text-xs text-gray-400">Checking...</span>
+  </div>
+  <div class="flex flex-wrap gap-3">
+    <button id="driveAuthBtn" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Connect Google Drive</button>
+    <button id="openDriveImport" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Import from Google Drive</button>
+    <button id="refreshDriveStatus" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Refresh status</button>
+  </div>
+  <p class="text-xs text-gray-500 mt-2">Set client ID/secret in Settings first. Tokens are stored encrypted.</p>
+  <p id="driveStatusMsg" class="text-sm mt-2 hidden"></p>
+</div>
+
 <div id="assetsEmpty" class="hidden text-gray-400 text-sm">No assets found.</div>
 <div id="assetsGrid" class="grid md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
 
@@ -58,6 +75,35 @@
     <div class="flex justify-end gap-3">
       <button id="cancelAssetDelete" class="bg-gray-700 text-white px-4 py-2 rounded">Cancel</button>
       <button id="confirmAssetDelete" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="driveImportModal" class="hidden fixed inset-0 bg-black/70 z-40 items-center justify-center p-4">
+  <div class="bg-dark-800 border border-gray-700 rounded-lg w-full max-w-lg p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-semibold">Import from Google Drive</h3>
+      <button id="closeDriveImport" class="text-gray-400 hover:text-white"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm mb-1">Share link or File ID</label>
+        <input id="driveImportLink" type="text" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="https://drive.google.com/file/d/..." />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Asset type</label>
+        <select id="driveImportType" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2">
+          <option value="video">Video</option>
+          <option value="audio">Audio</option>
+          <option value="sfx">SFX</option>
+        </select>
+      </div>
+      <p id="driveImportStatus" class="text-sm text-gray-300"></p>
+      <p id="driveImportError" class="text-sm text-red-400 hidden"></p>
+    </div>
+    <div class="flex justify-end gap-3">
+      <button id="cancelDriveImport" class="bg-gray-700 text-white px-4 py-2 rounded">Cancel</button>
+      <button id="confirmDriveImport" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Start import</button>
     </div>
   </div>
 </div>
@@ -85,6 +131,107 @@
     const assets = data.assets || [];
     assetsEmpty.classList.toggle('hidden', assets.length > 0);
     assetsGrid.innerHTML = assets.map(renderAsset).join('');
+  }
+
+  function setDriveStatusText(status) {
+    driveStatus = status || { configured: false, connected: false };
+    if (driveStatus.connected) {
+      driveStatusBadge.textContent = 'Drive connected';
+      driveStatusBadge.className = 'text-xs text-green-400';
+    } else if (driveStatus.configured) {
+      driveStatusBadge.textContent = 'Configured (authorize to import)';
+      driveStatusBadge.className = 'text-xs text-amber-300';
+    } else {
+      driveStatusBadge.textContent = 'Not configured';
+      driveStatusBadge.className = 'text-xs text-gray-400';
+    }
+  }
+
+  async function refreshDriveStatus() {
+    try {
+      const status = await fetchJson('/api/assets/google-drive/auth/status');
+      setDriveStatusText(status);
+      driveStatusMsg.classList.add('hidden');
+    } catch (err) {
+      setDriveStatusText(null);
+      driveStatusMsg.textContent = 'Unable to read Google Drive status';
+      driveStatusMsg.classList.remove('hidden');
+      driveStatusMsg.classList.add('text-red-400');
+    }
+  }
+
+  async function startDriveAuth() {
+    driveStatusMsg.classList.add('hidden');
+    try {
+      const data = await fetchJson('/api/assets/google-drive/auth/start', { method: 'POST' });
+      window.open(data.authUrl, '_blank');
+      driveStatusMsg.textContent = 'Complete the Google prompt, then click Refresh status.';
+      driveStatusMsg.classList.remove('hidden', 'text-red-400');
+      driveStatusMsg.classList.add('text-gray-300');
+    } catch (err) {
+      driveStatusMsg.textContent = err.message;
+      driveStatusMsg.classList.remove('hidden');
+      driveStatusMsg.classList.add('text-red-400');
+    }
+  }
+
+  function openDriveImportModal() {
+    driveImportError.classList.add('hidden');
+    driveImportStatus.textContent = driveStatus.connected
+      ? 'Paste a Drive link or file id to import.'
+      : 'Connect Google Drive first via OAuth.';
+    driveImportModal.classList.remove('hidden');
+  }
+
+  function closeDriveImportModal() {
+    driveImportModal.classList.add('hidden');
+  }
+
+  async function pollDriveImport(importId) {
+    try {
+      const status = await fetchJson(`/api/assets/google-drive/status/${importId}`);
+      if (status.status === 'completed') {
+        driveImportStatus.textContent = 'Import complete';
+        closeDriveImportModal();
+        await loadAssets();
+        return;
+      }
+      if (status.status === 'failed') {
+        driveImportError.textContent = status.error || 'Import failed';
+        driveImportError.classList.remove('hidden');
+        driveImportStatus.textContent = '';
+        return;
+      }
+      const progress = status.progress ? ` (${status.progress}% )` : '';
+      driveImportStatus.textContent = `${status.status || 'pending'}${progress}`;
+      setTimeout(() => pollDriveImport(importId), 2000);
+    } catch (err) {
+      driveImportError.textContent = err.message;
+      driveImportError.classList.remove('hidden');
+    }
+  }
+
+  async function startDriveImport() {
+    driveImportError.classList.add('hidden');
+    driveImportStatus.textContent = 'Starting import...';
+    try {
+      const payload = {
+        share_url: driveImportLink.value,
+        asset_type: driveImportType.value,
+      };
+      const data = await fetchJson('/api/assets/google-drive/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (data.import_id) {
+        pollDriveImport(data.import_id);
+      }
+    } catch (err) {
+      driveImportError.textContent = err.message;
+      driveImportError.classList.remove('hidden');
+      driveImportStatus.textContent = '';
+    }
   }
 
   function safeMeta(raw) {
@@ -148,6 +295,21 @@
   const assetDeleteModal = document.getElementById('assetDeleteModal');
   let assetDeleteTarget = null;
 
+  const driveStatusBadge = document.getElementById('driveStatusBadge');
+  const driveStatusMsg = document.getElementById('driveStatusMsg');
+  const driveAuthBtn = document.getElementById('driveAuthBtn');
+  const openDriveImportBtn = document.getElementById('openDriveImport');
+  const refreshDriveStatusBtn = document.getElementById('refreshDriveStatus');
+  const driveImportModal = document.getElementById('driveImportModal');
+  const driveImportLink = document.getElementById('driveImportLink');
+  const driveImportType = document.getElementById('driveImportType');
+  const driveImportStatus = document.getElementById('driveImportStatus');
+  const driveImportError = document.getElementById('driveImportError');
+  const confirmDriveImportBtn = document.getElementById('confirmDriveImport');
+  const cancelDriveImportBtn = document.getElementById('cancelDriveImport');
+  const closeDriveImportBtn = document.getElementById('closeDriveImport');
+  let driveStatus = { configured: false, connected: false };
+
   async function openAssetDelete(id) {
     assetDeleteTarget = id;
     document.getElementById('assetDeleteConfirm').checked = false;
@@ -185,5 +347,20 @@
   document.getElementById('cancelAssetDelete').onclick = () => assetDeleteModal.classList.add('hidden');
   document.getElementById('closeAssetDelete').onclick = () => assetDeleteModal.classList.add('hidden');
 
+  driveAuthBtn.onclick = startDriveAuth;
+  openDriveImportBtn.onclick = () => {
+    if (!driveStatus.connected) {
+      driveStatusMsg.textContent = 'Connect Google Drive first via Settings + Connect.';
+      driveStatusMsg.classList.remove('hidden');
+      driveStatusMsg.classList.add('text-amber-300');
+    }
+    openDriveImportModal();
+  };
+  refreshDriveStatusBtn.onclick = refreshDriveStatus;
+  confirmDriveImportBtn.onclick = startDriveImport;
+  cancelDriveImportBtn.onclick = closeDriveImportModal;
+  closeDriveImportBtn.onclick = closeDriveImportModal;
+
   loadAssets();
+  refreshDriveStatus();
 </script>

@@ -13,6 +13,9 @@ router.get('/', async (_req, res) => {
     const settings = await readSettings();
     const response = { ...settings };
     delete response.telegram_bot_token;
+    delete response.google_client_secret;
+    delete response.google_access_token;
+    delete response.google_refresh_token;
     response.telegram_bot_token_masked = maskToken(settings.telegram_bot_token);
     res.json({ settings: response });
   } catch (err) {
@@ -34,6 +37,9 @@ router.put('/', async (req, res) => {
       'telegram_bot_token',
       'telegram_events',
       'license_tier',
+      'google_client_id',
+      'google_client_secret',
+      'google_redirect_uri',
     ];
     const payload = {};
     allowed.forEach((key) => {
@@ -70,6 +76,15 @@ router.put('/', async (req, res) => {
       }
       payload.telegram_events = normalizeTelegramEvents(payload.telegram_events);
     }
+    if (payload.google_client_id && typeof payload.google_client_id !== 'string') {
+      return res.status(400).json({ message: 'google_client_id must be a string' });
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'google_client_secret') && typeof payload.google_client_secret !== 'string') {
+      return res.status(400).json({ message: 'google_client_secret must be a string' });
+    }
+    if (payload.google_redirect_uri && typeof payload.google_redirect_uri !== 'string') {
+      return res.status(400).json({ message: 'google_redirect_uri must be a string' });
+    }
     if (payload.license_tier) {
       const allowedTiers = ['basic', 'premium', 'ultimate'];
       if (!allowedTiers.includes(String(payload.license_tier).toLowerCase())) {
@@ -80,6 +95,7 @@ router.put('/', async (req, res) => {
     const settings = await writeSettings(payload);
     const response = { ...settings };
     delete response.telegram_bot_token;
+    delete response.google_client_secret;
     response.telegram_bot_token_masked = maskToken(settings.telegram_bot_token);
     res.json({ settings: response });
   } catch (err) {

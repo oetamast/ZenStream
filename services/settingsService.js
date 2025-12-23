@@ -29,6 +29,12 @@ const DEFAULT_SETTINGS = {
   telegram_events_json: JSON.stringify(DEFAULT_TELEGRAM_EVENTS),
   license_tier: 'basic',
   setup_completed: 0,
+  google_client_id: '',
+  google_client_secret_enc: null,
+  google_redirect_uri: '',
+  google_access_token_enc: null,
+  google_refresh_token_enc: null,
+  google_token_expiry: null,
 };
 
 function normalizeTier(tier) {
@@ -85,6 +91,15 @@ function maskToken(token) {
   return `${token.slice(0, 4)}…${token.slice(-4)}`;
 }
 
+function extractSecret(row, key) {
+  if (!row || !row[key]) return '';
+  try {
+    return decryptSecret(row[key]);
+  } catch (err) {
+    return '';
+  }
+}
+
 async function readSettings(options = {}) {
   const includeSecrets = options.includeSecrets !== false;
   const row = (await ensureSettingsRow()) || DEFAULT_SETTINGS;
@@ -101,6 +116,11 @@ async function readSettings(options = {}) {
     }
   }
 
+  const googleClientSecretPlain = extractSecret(merged, 'google_client_secret_enc');
+  const googleAccessToken = extractSecret(merged, 'google_access_token_enc');
+  const googleRefreshToken = extractSecret(merged, 'google_refresh_token_enc');
+  const googleTokenExpiry = merged.google_token_expiry ? Number(merged.google_token_expiry) : null;
+
   if (!merged.keep_forever) {
     let days = Number(merged.retention_days);
     if (!Number.isFinite(days)) days = DEFAULT_SETTINGS.retention_days;
@@ -113,10 +133,17 @@ async function readSettings(options = {}) {
     safety_cap_enabled: Boolean(merged.safety_cap_enabled),
     telegram_enabled: Boolean(merged.telegram_enabled),
     telegram_bot_token_enc: merged.telegram_bot_token_enc || null,
+    google_client_secret_masked: maskToken(googleClientSecretPlain),
+    google_access_token_present: Boolean(googleAccessToken),
+    google_refresh_token_present: Boolean(googleRefreshToken),
+    google_token_expiry: googleTokenExpiry,
   };
 
   if (includeSecrets) {
     normalized.telegram_bot_token = tokenPlain;
+    normalized.google_client_secret = googleClientSecretPlain;
+    normalized.google_access_token = googleAccessToken;
+    normalized.google_refresh_token = googleRefreshToken;
   }
 
   return normalized;
@@ -176,8 +203,51 @@ async function writeSettings(newSettings) {
     const token = newSettings.telegram_bot_token || '';
     toPersist.telegram_bot_token_enc = token ? encryptSecret(token) : null;
   }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'google_client_secret')) {
+    const clientSecret = newSettings.google_client_secret || '';
+    toPersist.google_client_secret_enc = clientSecret ? encryptSecret(clientSecret) : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'google_access_token')) {
+    const accessToken = newSettings.google_access_token || '';
+    toPersist.google_access_token_enc = accessToken ? encryptSecret(accessToken) : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'google_refresh_token')) {
+    const refreshToken = newSettings.google_refresh_token || '';
+    toPersist.google_refresh_token_enc = refreshToken ? encryptSecret(refreshToken) : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(newSettings, 'google_token_expiry')) {
+    toPersist.google_token_expiry = newSettings.google_token_expiry || null;
+  }
   delete toPersist.telegram_bot_token;
+  delete toPersist.google_client_secret;
+  delete toPersist.google_access_token;
+  delete toPersist.google_refresh_token;
   return SettingsRepository.write(toPersist);
+}
+
+async function saveGoogleTokens(tokenResponse) {
+  const payload = {};
+  if (tokenResponse.access_token) payload.google_access_token = tokenResponse.access_token;
+  if (tokenResponse.refresh_token) payload.google_refresh_token = tokenResponse.refresh_token;
+  if (tokenResponse.expiry_date) payload.google_token_expiry = tokenResponse.expiry_date;
+  return writeSettings(payload);
+}
+
+async function readGoogleOAuth(includeSecrets = false) {
+  const settings = await readSettings({ includeSecrets });
+  const hasRefresh = includeSecrets ? settings.google_refresh_token : settings.google_refresh_token_present;
+  const connected = Boolean(hasRefresh);
+  return {
+    client_id: settings.google_client_id || '',
+    client_secret: includeSecrets ? settings.google_client_secret : undefined,
+    client_secret_masked: settings.google_client_secret_masked,
+    redirect_uri: settings.google_redirect_uri || '',
+    access_token: includeSecrets ? settings.google_access_token : undefined,
+    refresh_token: includeSecrets ? settings.google_refresh_token : undefined,
+    refresh_token_present: Boolean(settings.google_refresh_token_present),
+    token_expiry: settings.google_token_expiry || null,
+    connected,
+  };
 }
 
 module.exports = {
@@ -189,4 +259,6 @@ module.exports = {
   normalizeTelegramEvents,
   normalizeTier,
   isTierAtLeast,
+  saveGoogleTokens,
+  readGoogleOAuth,
 };

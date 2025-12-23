@@ -483,8 +483,8 @@ const SettingsRepository = {
   },
   async write(settings) {
     await run(
-      `INSERT OR IGNORE INTO settings (id, timezone, language, retention_days, keep_forever, safety_cap_enabled, benchmark_profile, telegram_enabled, telegram_bot_token_enc, telegram_chat_id, telegram_events_json, license_tier, setup_completed)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO settings (id, timezone, language, retention_days, keep_forever, safety_cap_enabled, benchmark_profile, telegram_enabled, telegram_bot_token_enc, telegram_chat_id, telegram_events_json, license_tier, setup_completed, google_client_id, google_client_secret_enc, google_redirect_uri, google_access_token_enc, google_refresh_token_enc, google_token_expiry)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         settings.timezone,
         settings.language,
@@ -498,10 +498,16 @@ const SettingsRepository = {
         settings.telegram_events_json || null,
         settings.license_tier || 'basic',
         settings.setup_completed ? 1 : 0,
+        settings.google_client_id || null,
+        settings.google_client_secret_enc || null,
+        settings.google_redirect_uri || null,
+        settings.google_access_token_enc || null,
+        settings.google_refresh_token_enc || null,
+        settings.google_token_expiry || null,
       ]
     );
     await run(
-      `UPDATE settings SET timezone = ?, language = ?, retention_days = ?, keep_forever = ?, safety_cap_enabled = ?, benchmark_profile = ?, telegram_enabled = ?, telegram_bot_token_enc = ?, telegram_chat_id = ?, telegram_events_json = ?, license_tier = ?, setup_completed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`,
+      `UPDATE settings SET timezone = ?, language = ?, retention_days = ?, keep_forever = ?, safety_cap_enabled = ?, benchmark_profile = ?, telegram_enabled = ?, telegram_bot_token_enc = ?, telegram_chat_id = ?, telegram_events_json = ?, license_tier = ?, setup_completed = ?, google_client_id = ?, google_client_secret_enc = ?, google_redirect_uri = ?, google_access_token_enc = ?, google_refresh_token_enc = ?, google_token_expiry = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`,
       [
         settings.timezone,
         settings.language,
@@ -515,6 +521,12 @@ const SettingsRepository = {
         settings.telegram_events_json || null,
         settings.license_tier || 'basic',
         settings.setup_completed ? 1 : 0,
+        settings.google_client_id || null,
+        settings.google_client_secret_enc || null,
+        settings.google_redirect_uri || null,
+        settings.google_access_token_enc || null,
+        settings.google_refresh_token_enc || null,
+        settings.google_token_expiry || null,
       ]
     );
     return this.read();

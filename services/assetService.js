@@ -1,6 +1,5 @@
 const path = require('path');
 const fs = require('fs-extra');
-const axios = require('axios');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream');
 const { promisify } = require('util');
@@ -9,6 +8,7 @@ const { getUniqueFilename, paths, dataRoot } = require('../utils/storage');
 const { AssetsRepository, JobsRepository } = require('../db/repositories');
 const { recordEvent } = require('./eventService');
 const { invalidateJobs } = require('./jobService');
+const googleDriveService = require('./googleDriveService');
 
 const MAX_ASSET_SIZE_BYTES = 500 * 1024 * 1024;
 const ALLOWED_TYPES = ['video', 'audio', 'sfx'];
@@ -262,16 +262,11 @@ async function analyzeAssetById(assetId) {
   return analyzeAsset(asset);
 }
 
-function extractFilenameFromHeaders(headers) {
-  const disposition = headers['content-disposition'];
-  if (!disposition) return null;
-  const match = disposition.match(/filename="?([^";]+)"?/i);
-  return match ? match[1] : null;
-}
-
-function parseGoogleDriveId(url) {
+function parseGoogleDriveId(urlOrId) {
+  if (!urlOrId) return null;
+  if (/^[A-Za-z0-9_-]{10,}$/.test(urlOrId)) return urlOrId;
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(urlOrId);
     if (!parsed.hostname.includes('drive.google.com')) return null;
     const fileIdMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/);
     if (fileIdMatch) return fileIdMatch[1];
@@ -283,76 +278,75 @@ function parseGoogleDriveId(url) {
   }
 }
 
-async function downloadGoogleDriveFile(shareUrl, targetPath) {
-  const fileId = parseGoogleDriveId(shareUrl);
-  if (!fileId) {
-    const err = new Error('Invalid Google Drive link');
-    err.status = 400;
-    throw err;
-  }
-  const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-  const response = await axios.get(downloadUrl, {
-    responseType: 'stream',
-    maxRedirects: 5,
-    validateStatus: (status) => status >= 200 && status < 400,
-  });
-  if (response.status >= 300) {
-    const err = new Error('Google Drive link is not publicly downloadable');
-    err.status = 400;
-    throw err;
-  }
-  const contentType = response.headers['content-type'];
-  if (contentType && contentType.includes('text/html')) {
-    const err = new Error('Google Drive link requires authentication or is not accessible');
-    err.status = 400;
-    throw err;
-  }
-  const contentLength = response.headers['content-length'] ? Number(response.headers['content-length']) : null;
-  if (contentLength && contentLength > MAX_ASSET_SIZE_BYTES) {
-    const err = new Error('File exceeds 500MB limit');
-    err.status = 400;
-    throw err;
-  }
+const importStatuses = new Map();
 
-  let downloaded = 0;
-  response.data.on('data', (chunk) => {
-    downloaded += chunk.length;
-    if (downloaded > MAX_ASSET_SIZE_BYTES) {
-      response.data.destroy(new Error('File exceeds 500MB limit'));
-    }
-  });
-
-  try {
-    await pipelineAsync(response.data, fs.createWriteStream(targetPath));
-  } catch (err) {
-    if (err.message && err.message.includes('500MB')) {
-      err.status = 400;
-    }
-    throw err;
-  }
-
-  const stats = await fs.stat(targetPath);
-  return { size: stats.size, filename: extractFilenameFromHeaders(response.headers) || `${fileId}` };
+function updateImportStatus(importId, patch) {
+  const current = importStatuses.get(importId) || {};
+  importStatuses.set(importId, { ...current, ...patch, updated_at: new Date().toISOString() });
 }
 
-async function importFromGoogleDrive(shareUrl, assetType) {
-  const normalizedType = (assetType || '').toLowerCase();
-  assertValidAssetType(normalizedType);
-  await fs.ensureDir(TEMP_DIR);
-  const tempPath = path.join(TEMP_DIR, getUniqueFilename('gdrive-temp'));
-  await recordEvent({
-    event_type: 'asset_import_started',
-    message: 'Google Drive import started',
-    metadata: { asset_type: normalizedType },
-  });
+function inferAssetTypeFromMime(mimeType, fallback) {
+  if (mimeType?.startsWith('video/')) return 'video';
+  if (mimeType?.startsWith('audio/')) return 'audio';
+  if (fallback) return fallback.toLowerCase();
+  return null;
+}
 
+async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
+  let tempPath = null;
   try {
-    const downloadInfo = await downloadGoogleDriveFile(shareUrl, tempPath);
+    const driveFileId = fileId || parseGoogleDriveId(shareUrl);
+    if (!driveFileId) {
+      const err = new Error('Invalid Google Drive link or file id');
+      err.status = 400;
+      throw err;
+    }
+
+    await recordEvent({
+      event_type: 'asset_import_started',
+      message: 'Google Drive import started',
+      metadata: { asset_type: assetType || null, file_id: driveFileId },
+    });
+
+    const metadata = await googleDriveService.getFileMetadata(driveFileId);
+    const inferredType = inferAssetTypeFromMime(metadata.mimeType, assetType);
+    const normalizedType = (inferredType || '').toLowerCase();
+    assertValidAssetType(normalizedType);
+
+    const sizeBytes = metadata.size ? Number(metadata.size) : null;
+    if (sizeBytes && sizeBytes > MAX_ASSET_SIZE_BYTES) {
+      const err = new Error('File exceeds 500MB limit');
+      err.status = 400;
+      throw err;
+    }
+
+    await fs.ensureDir(TEMP_DIR);
+    tempPath = path.join(TEMP_DIR, getUniqueFilename('gdrive-temp'));
+    updateImportStatus(importId, {
+      status: 'downloading',
+      progress: 0,
+      filename: metadata.name,
+      mimeType: metadata.mimeType,
+    });
+
+    await googleDriveService.downloadFile(driveFileId, tempPath, (progress) => {
+      updateImportStatus(importId, { status: 'downloading', progress });
+    });
+
+    const stats = await fs.stat(tempPath);
+    if (stats.size > MAX_ASSET_SIZE_BYTES) {
+      const err = new Error('File exceeds 500MB limit');
+      err.status = 400;
+      throw err;
+    }
+
     const { finalName, finalPath, size } = await moveToFinalLocation(
       tempPath,
       normalizedType,
-      downloadInfo.filename || 'google-drive-import'
+      metadata.name || `${driveFileId}`
     );
+    updateImportStatus(importId, { status: 'processing', progress: 100, filename: finalName });
+
     const asset = await AssetsRepository.create({
       type: normalizedType,
       filename: finalName,
@@ -364,18 +358,38 @@ async function importFromGoogleDrive(shareUrl, assetType) {
     await recordEvent({
       event_type: 'asset_import_completed',
       message: 'Google Drive import completed',
-      metadata: { asset_id: asset.id, filename: finalName },
+      metadata: { asset_id: asset.id, filename: finalName, file_id: driveFileId },
     });
-    return analyzed;
+    updateImportStatus(importId, { status: 'completed', asset: analyzed });
   } catch (err) {
-    await fs.remove(tempPath);
+    if (tempPath) await fs.remove(tempPath).catch(() => {});
     await recordEvent({
       event_type: 'asset_import_failed',
       message: err.status === 400 ? err.message : 'Google Drive import failed',
-      metadata: { asset_type: normalizedType },
+      metadata: { error: err.message },
     });
-    throw err;
+    updateImportStatus(importId, {
+      status: 'failed',
+      error: err.message || 'Google Drive import failed',
+    });
   }
+}
+
+async function startGoogleDriveImport({ shareUrl, fileId, assetType }) {
+  await googleDriveService.ensureAuthorized();
+  const importId = uuidv4();
+  importStatuses.set(importId, { status: 'pending', progress: 0 });
+  setImmediate(() => {
+    runGoogleDriveImport(importId, { shareUrl, fileId, assetType }).catch((err) => {
+      console.error('Google Drive import error', err);
+      updateImportStatus(importId, { status: 'failed', error: err.message || 'Import failed' });
+    });
+  });
+  return { import_id: importId };
+}
+
+function getGoogleImportStatus(importId) {
+  return importStatuses.get(importId) || { status: 'unknown' };
 }
 
 module.exports = {
@@ -383,7 +397,8 @@ module.exports = {
   handleUploadedFile,
   listAssets,
   analyzeAssetById,
-  importFromGoogleDrive,
+  startGoogleDriveImport,
+  getGoogleImportStatus,
   listImpactedJobsForAsset,
   deleteAsset,
   paths,
