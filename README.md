@@ -81,6 +81,7 @@ Mount a host directory to `/data` in `docker-compose.yml` to preserve uploads an
 - Google Drive import:
   - Public share links do **not** require OAuth. Use the Assets page “Import from Google Drive” button or call `POST /api/assets/google-drive/import` with `share_url` + `asset_type`. Large links that show Google’s “can’t scan / download anyway” interstitial are followed automatically.
   - Private links still require OAuth: set client ID/secret and redirect URL (e.g., `http://<host>:6969/api/assets/google-drive/auth/callback`) in **Settings → Google Drive**, then click **Connect Google Drive**. Tokens are encrypted at rest.
+  - If Google Drive responds with a permission page, rate limit message, or bot block, the API surfaces a clear error (permission, rate limit, or automated-traffic blocked) so you know whether to change sharing, wait, or try OAuth.
   - Check status with `GET /api/assets/google-drive/status/:id`; events log successes/failures.
 
 ### Destinations (YouTube RTMP/RTMPS)

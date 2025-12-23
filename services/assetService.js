@@ -263,20 +263,10 @@ async function analyzeAssetById(assetId) {
   return analyzeAsset(asset);
 }
 
-function parseGoogleDriveId(urlOrId) {
-  if (!urlOrId) return null;
-  if (/^[A-Za-z0-9_-]{10,}$/.test(urlOrId)) return urlOrId;
-  try {
-    const parsed = new URL(urlOrId);
-    if (!parsed.hostname.includes('drive.google.com')) return null;
-    const fileIdMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/);
-    if (fileIdMatch) return fileIdMatch[1];
-    const idParam = parsed.searchParams.get('id');
-    if (idParam) return idParam;
-    return null;
-  } catch (err) {
-    return null;
-  }
+function parseGoogleDriveInfo(urlOrId) {
+  const info = gdrivePublicService.extractFileInfo(urlOrId);
+  if (!info?.fileId) return null;
+  return info;
 }
 
 const importStatuses = new Map();
@@ -293,11 +283,15 @@ function inferAssetTypeFromMime(mimeType, fallback) {
   return null;
 }
 
-async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
+async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType, resourceKey }) {
   let tempPath = null;
   try {
-    const driveFileId = fileId || parseGoogleDriveId(shareUrl);
-    if (!driveFileId) {
+    const parsed = parseGoogleDriveInfo(fileId || shareUrl) || {};
+    const driveInfo = {
+      fileId: parsed.fileId || fileId,
+      resourceKey: parsed.resourceKey || resourceKey || null,
+    };
+    if (!driveInfo.fileId) {
       const err = new Error('Invalid Google Drive link or file id');
       err.status = 400;
       throw err;
@@ -306,7 +300,7 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
     await recordEvent({
       event_type: 'asset_import_started',
       message: 'Google Drive import started',
-      metadata: { asset_type: assetType || null, file_id: driveFileId },
+      metadata: { asset_type: assetType || null, file_id: driveInfo.fileId },
     });
 
     await fs.ensureDir(TEMP_DIR);
@@ -319,20 +313,21 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
     let downloadResult = null;
     try {
       downloadResult = await gdrivePublicService.downloadPublicFile({
-        fileId: driveFileId,
+        fileId: driveInfo.fileId,
+        resourceKey: driveInfo.resourceKey,
         targetPath: tempPath,
-        preferredName: shareUrl || driveFileId,
+        preferredName: shareUrl || driveInfo.fileId,
         onProgress: (progress) => updateImportStatus(importId, { status: 'downloading', progress }),
       });
     } catch (err) {
       if (err.code === 'GDRIVE_PERMISSION_REQUIRED') {
-        const metadata = await googleDriveService.getFileMetadata(driveFileId);
+        const metadata = await googleDriveService.getFileMetadata(driveInfo.fileId);
         downloadResult = {
-          filename: metadata.name || `${driveFileId}`,
+          filename: metadata.name || `${driveInfo.fileId}`,
           mimeType: metadata.mimeType || null,
           sizeBytes: metadata.size ? Number(metadata.size) : null,
         };
-        await googleDriveService.downloadFile(driveFileId, tempPath, (progress) => {
+        await googleDriveService.downloadFile(driveInfo.fileId, tempPath, (progress) => {
           updateImportStatus(importId, { status: 'downloading', progress });
         });
       } else {
@@ -354,7 +349,7 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
     const { finalName, finalPath, size } = await moveToFinalLocation(
       tempPath,
       normalizedType,
-      downloadResult.filename || `${driveFileId}`
+      downloadResult.filename || `${driveInfo.fileId}`
     );
     updateImportStatus(importId, { status: 'processing', progress: 100, filename: finalName });
 
@@ -369,7 +364,7 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
     await recordEvent({
       event_type: 'asset_import_completed',
       message: 'Google Drive import completed',
-      metadata: { asset_id: asset.id, filename: finalName, file_id: driveFileId },
+      metadata: { asset_id: asset.id, filename: finalName, file_id: driveInfo.fileId },
     });
     updateImportStatus(importId, { status: 'completed', asset: analyzed });
   } catch (err) {
@@ -387,14 +382,14 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
 }
 
 async function startGoogleDriveImport({ shareUrl, fileId, assetType }) {
-  const driveFileId = fileId || parseGoogleDriveId(shareUrl);
-  if (!driveFileId) {
+  const driveInfo = parseGoogleDriveInfo(fileId || shareUrl);
+  if (!driveInfo?.fileId) {
     const err = new Error('Invalid Google Drive link or file id');
     err.status = 400;
     throw err;
   }
   try {
-    await gdrivePublicService.preflightPublicFile(driveFileId);
+    await gdrivePublicService.preflightPublicFile({ fileId: driveInfo.fileId, resourceKey: driveInfo.resourceKey });
   } catch (err) {
     if (err.code === 'GDRIVE_PERMISSION_REQUIRED') {
       // Allow proceeding when OAuth is connected; otherwise surface a friendly error immediately.
@@ -410,7 +405,12 @@ async function startGoogleDriveImport({ shareUrl, fileId, assetType }) {
   const importId = uuidv4();
   importStatuses.set(importId, { status: 'pending', progress: 0 });
   setImmediate(() => {
-    runGoogleDriveImport(importId, { shareUrl, fileId, assetType }).catch((err) => {
+    runGoogleDriveImport(importId, {
+      shareUrl,
+      fileId: driveInfo.fileId,
+      resourceKey: driveInfo.resourceKey,
+      assetType,
+    }).catch((err) => {
       console.error('Google Drive import error', err);
       updateImportStatus(importId, { status: 'failed', error: err.message || 'Import failed' });
     });

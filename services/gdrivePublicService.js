@@ -9,24 +9,30 @@ const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
 const DOWNLOAD_URL = 'https://drive.google.com/uc';
 const HTML_PREVIEW_LIMIT = 1024 * 1024; // 1MB
-const HTML_LOG_SLICE = 500;
+const HTML_LOG_SLICE = 800;
 const USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
-function extractFileId(input) {
-  if (!input) return null;
-  if (/^[A-Za-z0-9_-]{10,}$/.test(input)) return input;
+function extractFileInfo(input) {
+  if (!input) return { fileId: null, resourceKey: null };
+  if (/^[A-Za-z0-9_-]{10,}$/.test(input)) {
+    return { fileId: input, resourceKey: null };
+  }
   try {
     const parsed = new URL(input);
-    if (!parsed.hostname.includes('drive.google.com')) return null;
+    if (!parsed.hostname.includes('drive.google.com')) return { fileId: null, resourceKey: null };
     const fileMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/);
-    if (fileMatch) return fileMatch[1];
     const openId = parsed.searchParams.get('id');
-    if (openId) return openId;
-    return null;
+    const fileId = fileMatch ? fileMatch[1] : openId;
+    const resourceKey = parsed.searchParams.get('resourcekey');
+    return { fileId, resourceKey };
   } catch (err) {
-    return null;
+    return { fileId: null, resourceKey: null };
   }
+}
+
+function extractFileId(input) {
+  return extractFileInfo(input).fileId;
 }
 
 function parseFilename(contentDisposition, fallback) {
@@ -76,9 +82,10 @@ function buildClient(jar) {
   );
 }
 
-async function requestDownload(client, { fileId, confirmToken }) {
+async function requestDownload(client, { fileId, confirmToken, resourceKey }) {
   const params = { export: 'download', id: fileId };
   if (confirmToken) params.confirm = confirmToken;
+  if (resourceKey) params.resourcekey = resourceKey;
   return client.get(DOWNLOAD_URL, { params });
 }
 
@@ -106,14 +113,43 @@ function findConfirmToken(html = '') {
   return null;
 }
 
-function logHtmlDebug(res, html) {
+function findDownloadForm(html = '') {
+  const formMatch = html.match(/<form[^>]*id=["']download-form["'][^>]*>([\s\S]*?)<\/form>/i);
+  if (!formMatch) return null;
+  const formTag = html.match(/<form[^>]*id=["']download-form["'][^>]*>/i);
+  const actionMatch = formTag?.[0]?.match(/action=["']([^"']+)/i);
+  const action = actionMatch ? actionMatch[1] : null;
+  const params = {};
+  const inputs = formMatch[1].match(/<input[^>]*type=["']hidden["'][^>]*>/gi) || [];
+  inputs.forEach((input) => {
+    const nameMatch = input.match(/name=["']([^"']+)["']/i);
+    const valueMatch = input.match(/value=["']([^"']*)["']/i);
+    if (nameMatch) {
+      params[nameMatch[1]] = valueMatch ? valueMatch[1] : '';
+    }
+  });
+  if (action) {
+    return { action, params };
+  }
+  return null;
+}
+
+function logHtmlDebug(res, html, context = 'html', force = false) {
   try {
+    if (!force && process.env.GDRIVE_DEBUG !== '1') return;
     const finalUrl = res?.request?.res?.responseUrl || res?.config?.url;
-    const snippet = html.slice(0, HTML_LOG_SLICE).replace(/\s+/g, ' ').trim();
+    const snippet = html
+      .slice(0, HTML_LOG_SLICE)
+      .replace(/\s+/g, ' ')
+      .replace(/confirm=[0-9A-Za-z_-]+/gi, 'confirm=<redacted>')
+      .trim();
+    const setCookies = Array.isArray(res?.headers?.['set-cookie']) ? res.headers['set-cookie'].length : 0;
     console.warn('[gdrive] html response', {
+      context,
       status: res?.status,
       url: finalUrl,
       type: res?.headers?.['content-type'],
+      set_cookies: setCookies,
       preview: snippet,
     });
   } catch (e) {
@@ -121,41 +157,95 @@ function logHtmlDebug(res, html) {
   }
 }
 
-async function resolveDownloadResponse(client, fileId) {
-  let res = await requestDownload(client, { fileId });
+function isRateLimitHtml(html = '') {
+  const lowered = html.toLowerCase();
+  return lowered.includes('too many users have viewed') || lowered.includes('too many users have downloaded');
+}
+
+function isBotBlockHtml(html = '') {
+  const lowered = html.toLowerCase();
+  return lowered.includes('automated queries') || lowered.includes('unusual traffic') || lowered.includes('captcha');
+}
+
+function normalizeActionUrl(action) {
+  if (!action) return null;
+  if (action.startsWith('http://') || action.startsWith('https://')) return action;
+  if (action.startsWith('//')) return `https:${action}`;
+  if (action.startsWith('/')) return `https://drive.google.com${action}`;
+  return action;
+}
+
+async function resolveHtmlResponse(client, { res, fileId, resourceKey, contentDisposition }) {
+  const html = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
+  const confirmToken = findConfirmToken(html);
+  const downloadForm = findDownloadForm(html);
+
+  if (downloadForm) {
+    const actionUrl = normalizeActionUrl(downloadForm.action);
+    const params = { ...downloadForm.params };
+    if (resourceKey && !params.resourcekey) params.resourcekey = resourceKey;
+    res = await client.get(actionUrl, { params });
+    contentDisposition = res.headers['content-disposition'] || contentDisposition;
+    if (!isHtmlResponse(res)) {
+      return { res, contentDisposition };
+    }
+    const htmlAfterForm = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
+    return handleTerminalHtml(res, htmlAfterForm, contentDisposition);
+  }
+
+  if (confirmToken) {
+    res = await requestDownload(client, { fileId, confirmToken, resourceKey });
+    contentDisposition = res.headers['content-disposition'] || contentDisposition;
+    if (!isHtmlResponse(res)) {
+      return { res, contentDisposition };
+    }
+    const htmlAfter = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
+    return handleTerminalHtml(res, htmlAfter, contentDisposition);
+  }
+
+  return handleTerminalHtml(res, html, contentDisposition);
+}
+
+function handleTerminalHtml(res, html, contentDisposition) {
+  logHtmlDebug(res, html, 'html_terminal', true);
+  if (sniffPermissionHtml(html)) {
+    throw buildPermissionError();
+  }
+  if (isRateLimitHtml(html)) {
+    const err = new Error(
+      'Google Drive rate-limited this file. Try again later or copy it to another Drive and share that.'
+    );
+    err.status = 429;
+    err.code = 'GDRIVE_RATE_LIMIT';
+    throw err;
+  }
+  if (isBotBlockHtml(html)) {
+    const err = new Error(
+      'Google Drive blocked automated downloads from this server IP. Try OAuth import or host the file elsewhere.'
+    );
+    err.status = 429;
+    err.code = 'GDRIVE_BOT_BLOCKED';
+    throw err;
+  }
+  const err = new Error('Google Drive returned an unexpected page. Check server logs for the HTML snippet.');
+  err.status = 502;
+  err.code = 'GDRIVE_UNEXPECTED_HTML';
+  err.details = { contentDisposition };
+  throw err;
+}
+
+async function resolveDownloadResponse(client, { fileId, resourceKey }) {
+  let res = await requestDownload(client, { fileId, resourceKey });
   let contentDisposition = res.headers['content-disposition'] || '';
 
   if (isHtmlResponse(res)) {
-    const html = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
-    logHtmlDebug(res, html);
-    const confirmToken = findConfirmToken(html);
-    if (confirmToken) {
-      res = await requestDownload(client, { fileId, confirmToken });
-      contentDisposition = res.headers['content-disposition'] || contentDisposition;
-      if (isHtmlResponse(res)) {
-        const htmlAfter = await streamToStringLimited(res.data, HTML_PREVIEW_LIMIT);
-        logHtmlDebug(res, htmlAfter);
-        if (sniffPermissionHtml(htmlAfter)) {
-          throw buildPermissionError();
-        }
-        const err = new Error('Unexpected Google Drive HTML response after confirm');
-        err.status = 400;
-        throw err;
-      }
-    } else {
-      if (sniffPermissionHtml(html)) {
-        throw buildPermissionError();
-      }
-      const err = new Error('Unexpected Google Drive HTML response. Try again or use OAuth for private files.');
-      err.status = 400;
-      throw err;
-    }
+    ({ res, contentDisposition } = await resolveHtmlResponse(client, { res, fileId, resourceKey, contentDisposition }));
   }
 
   return { res, contentDisposition };
 }
 
-async function preflightPublicFile(fileId) {
+async function preflightPublicFile({ fileId, resourceKey }) {
   if (!fileId) {
     const err = new Error('Missing Google Drive file id');
     err.status = 400;
@@ -163,7 +253,7 @@ async function preflightPublicFile(fileId) {
   }
   const jar = new CookieJar();
   const client = buildClient(jar);
-  const { res, contentDisposition } = await resolveDownloadResponse(client, fileId);
+  const { res, contentDisposition } = await resolveDownloadResponse(client, { fileId, resourceKey });
   if (res.data?.destroy) {
     res.data.destroy();
   }
@@ -174,7 +264,7 @@ async function preflightPublicFile(fileId) {
   };
 }
 
-async function downloadPublicFile({ fileId, targetPath, preferredName, onProgress }) {
+async function downloadPublicFile({ fileId, resourceKey, targetPath, preferredName, onProgress }) {
   if (!fileId) {
     const err = new Error('Missing Google Drive file id');
     err.status = 400;
@@ -182,7 +272,7 @@ async function downloadPublicFile({ fileId, targetPath, preferredName, onProgres
   }
   const jar = new CookieJar();
   const client = buildClient(jar);
-  const { res, contentDisposition } = await resolveDownloadResponse(client, fileId);
+  const { res, contentDisposition } = await resolveDownloadResponse(client, { fileId, resourceKey });
 
   const filename = parseFilename(contentDisposition, preferredName || `${fileId}`);
   await fs.ensureDir(path.dirname(targetPath));
@@ -207,6 +297,7 @@ async function downloadPublicFile({ fileId, targetPath, preferredName, onProgres
 
 module.exports = {
   extractFileId,
+  extractFileInfo,
   preflightPublicFile,
   downloadPublicFile,
 };
