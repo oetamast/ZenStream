@@ -31,7 +31,11 @@ ensure_packages() {
   ${SUDO} apt-get install -y curl ca-certificates
 
   info "Installing Node.js (22.x), FFmpeg, Git, and UFW..."
-  curl -fsSL "$NODE_VERSION_SETUP" | ${SUDO} -E bash -
+  if [[ -n "$SUDO" ]]; then
+    curl -fsSL "$NODE_VERSION_SETUP" | ${SUDO} -E bash -
+  else
+    curl -fsSL "$NODE_VERSION_SETUP" | bash -
+  fi
   ${SUDO} apt-get install -y nodejs ffmpeg git ufw
 }
 
