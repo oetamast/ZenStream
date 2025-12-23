@@ -9,8 +9,8 @@ const {
   runJobNow,
   refreshJobStatus,
   stopSession,
+  recordEvent,
 } = require('./jobService');
-const { recordEvent } = require('./eventService');
 
 let schedulerInterval = null;
 let isRunningTick = false;
