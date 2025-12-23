@@ -9,6 +9,7 @@ const { AssetsRepository, JobsRepository } = require('../db/repositories');
 const { recordEvent } = require('./eventService');
 const { invalidateJobs } = require('./jobService');
 const googleDriveService = require('./googleDriveService');
+const gdrivePublicService = require('./gdrivePublicService');
 
 const MAX_ASSET_SIZE_BYTES = 500 * 1024 * 1024;
 const ALLOWED_TYPES = ['video', 'audio', 'sfx'];
@@ -308,30 +309,40 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
       metadata: { asset_type: assetType || null, file_id: driveFileId },
     });
 
-    const metadata = await googleDriveService.getFileMetadata(driveFileId);
-    const inferredType = inferAssetTypeFromMime(metadata.mimeType, assetType);
-    const normalizedType = (inferredType || '').toLowerCase();
-    assertValidAssetType(normalizedType);
-
-    const sizeBytes = metadata.size ? Number(metadata.size) : null;
-    if (sizeBytes && sizeBytes > MAX_ASSET_SIZE_BYTES) {
-      const err = new Error('File exceeds 500MB limit');
-      err.status = 400;
-      throw err;
-    }
-
     await fs.ensureDir(TEMP_DIR);
     tempPath = path.join(TEMP_DIR, getUniqueFilename('gdrive-temp'));
     updateImportStatus(importId, {
       status: 'downloading',
       progress: 0,
-      filename: metadata.name,
-      mimeType: metadata.mimeType,
     });
 
-    await googleDriveService.downloadFile(driveFileId, tempPath, (progress) => {
-      updateImportStatus(importId, { status: 'downloading', progress });
-    });
+    let downloadResult = null;
+    try {
+      downloadResult = await gdrivePublicService.downloadPublicFile({
+        fileId: driveFileId,
+        targetPath: tempPath,
+        preferredName: shareUrl || driveFileId,
+        onProgress: (progress) => updateImportStatus(importId, { status: 'downloading', progress }),
+      });
+    } catch (err) {
+      if (err.code === 'GDRIVE_PERMISSION_REQUIRED') {
+        const metadata = await googleDriveService.getFileMetadata(driveFileId);
+        downloadResult = {
+          filename: metadata.name || `${driveFileId}`,
+          mimeType: metadata.mimeType || null,
+          sizeBytes: metadata.size ? Number(metadata.size) : null,
+        };
+        await googleDriveService.downloadFile(driveFileId, tempPath, (progress) => {
+          updateImportStatus(importId, { status: 'downloading', progress });
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    const inferredType = inferAssetTypeFromMime(downloadResult.mimeType, assetType);
+    const normalizedType = (inferredType || '').toLowerCase();
+    assertValidAssetType(normalizedType);
 
     const stats = await fs.stat(tempPath);
     if (stats.size > MAX_ASSET_SIZE_BYTES) {
@@ -343,7 +354,7 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
     const { finalName, finalPath, size } = await moveToFinalLocation(
       tempPath,
       normalizedType,
-      metadata.name || `${driveFileId}`
+      downloadResult.filename || `${driveFileId}`
     );
     updateImportStatus(importId, { status: 'processing', progress: 100, filename: finalName });
 
@@ -376,7 +387,26 @@ async function runGoogleDriveImport(importId, { shareUrl, fileId, assetType }) {
 }
 
 async function startGoogleDriveImport({ shareUrl, fileId, assetType }) {
-  await googleDriveService.ensureAuthorized();
+  const driveFileId = fileId || parseGoogleDriveId(shareUrl);
+  if (!driveFileId) {
+    const err = new Error('Invalid Google Drive link or file id');
+    err.status = 400;
+    throw err;
+  }
+  try {
+    await gdrivePublicService.preflightPublicFile(driveFileId);
+  } catch (err) {
+    if (err.code === 'GDRIVE_PERMISSION_REQUIRED') {
+      // Allow proceeding when OAuth is connected; otherwise surface a friendly error immediately.
+      try {
+        await googleDriveService.ensureAuthorized();
+      } catch (authErr) {
+        throw err;
+      }
+    } else {
+      throw err;
+    }
+  }
   const importId = uuidv4();
   importStatuses.set(importId, { status: 'pending', progress: 0 });
   setImmediate(() => {

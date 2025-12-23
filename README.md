@@ -78,10 +78,9 @@ Mount a host directory to `/data` in `docker-compose.yml` to preserve uploads an
 - Upload up to **500MB** per file via `POST /api/assets/upload` (multipart fields: `file`, `asset_type` as `video|audio|sfx`).
 - Files are stored under `/data/assets/<type>` and analyzed automatically with `ffprobe`; thumbnails for videos are saved to `/data/assets/thumbs` and served at `/api/assets/:id/thumbnail`.
 - Search by filename only with `GET /api/assets?type=video&query=<substring>` (results are newest first).
-- Google Drive OAuth import:
-  - In **Settings → Google Drive**, add your OAuth client ID/secret and redirect URL (e.g., `http://<host>:6969/api/assets/google-drive/auth/callback`).
-  - Click **Connect Google Drive** to complete OAuth; tokens are encrypted at rest.
-  - Use the Assets page “Import from Google Drive” button or call `POST /api/assets/google-drive/import` (`share_url` or `file_id`, `asset_type`).
+- Google Drive import:
+  - Public share links do **not** require OAuth. Use the Assets page “Import from Google Drive” button or call `POST /api/assets/google-drive/import` with `share_url` + `asset_type`.
+  - Private links require OAuth: set client ID/secret and redirect URL (e.g., `http://<host>:6969/api/assets/google-drive/auth/callback`) in **Settings → Google Drive**, then click **Connect Google Drive**. Tokens are encrypted at rest.
   - Check status with `GET /api/assets/google-drive/status/:id`; events log successes/failures.
 
 ### Destinations (YouTube RTMP/RTMPS)

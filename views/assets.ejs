@@ -43,7 +43,7 @@
   <div class="flex items-center justify-between mb-3">
     <div>
       <h2 class="font-semibold">Google Drive import</h2>
-      <p class="text-gray-400 text-sm">Connect with OAuth and import a Drive file directly.</p>
+      <p class="text-gray-400 text-sm">Public share links work without OAuth. Connect for private files.</p>
     </div>
     <span id="driveStatusBadge" class="text-xs text-gray-400">Checking...</span>
   </div>
@@ -52,7 +52,7 @@
     <button id="openDriveImport" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Import from Google Drive</button>
     <button id="refreshDriveStatus" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Refresh status</button>
   </div>
-  <p class="text-xs text-gray-500 mt-2">Set client ID/secret in Settings first. Tokens are stored encrypted.</p>
+  <p class="text-xs text-gray-500 mt-2">Set client ID/secret in Settings if you need to pull private Drive files. Tokens are stored encrypted.</p>
   <p id="driveStatusMsg" class="text-sm mt-2 hidden"></p>
 </div>
 
@@ -177,9 +177,7 @@
 
   function openDriveImportModal() {
     driveImportError.classList.add('hidden');
-    driveImportStatus.textContent = driveStatus.connected
-      ? 'Paste a Drive link or file id to import.'
-      : 'Connect Google Drive first via OAuth.';
+    driveImportStatus.textContent = 'Paste a Drive public share link or file id to import.';
     driveImportModal.classList.remove('hidden');
   }
 
@@ -349,11 +347,7 @@
 
   driveAuthBtn.onclick = startDriveAuth;
   openDriveImportBtn.onclick = () => {
-    if (!driveStatus.connected) {
-      driveStatusMsg.textContent = 'Connect Google Drive first via Settings + Connect.';
-      driveStatusMsg.classList.remove('hidden');
-      driveStatusMsg.classList.add('text-amber-300');
-    }
+    driveStatusMsg.classList.add('hidden');
     openDriveImportModal();
   };
   refreshDriveStatusBtn.onclick = refreshDriveStatus;
