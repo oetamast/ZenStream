@@ -1,447 +1,347 @@
 <% layout('layout') -%>
-  
-  <div class="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Settings</h1>
+    <p class="text-gray-400 text-sm">Timezone, language, retention, and alerts.</p>
+  </div>
+</div>
+
+<div class="bg-dark-800 border border-gray-700 rounded-lg p-4">
+  <div class="grid md:grid-cols-2 gap-4">
     <div>
-      <h2 class="text-2xl font-bold">Settings</h2>
-      <p class="text-gray-400 text-sm mt-1">Manage your account and preferences</p>
+      <label class="block text-sm mb-1">License tier</label>
+      <select id="licenseTier" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2">
+        <option value="basic">Basic</option>
+        <option value="premium">Premium</option>
+        <option value="ultimate">Ultimate</option>
+      </select>
+      <p class="text-xs text-gray-500 mt-1">Licensing server comes later. This is a local stub for development.</p>
+      <p class="text-xs text-gray-400 mt-1">Basic runs without retry; Premium/Ultimate retry within the schedule/run window.</p>
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Timezone</label>
+      <select id="settingTimezone" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2">
+        <option value="UTC">UTC</option>
+        <option value="Asia/Jakarta">Asia/Jakarta</option>
+        <option value="America/New_York">America/New_York</option>
+        <option value="Europe/London">Europe/London</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Language</label>
+      <select id="settingLanguage" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2">
+        <option value="en">English</option>
+        <option value="id">Bahasa Indonesia</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Retention days</label>
+      <input id="settingRetention" type="number" min="1" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+    </div>
+    <div class="flex items-center gap-2">
+      <input id="settingForever" type="checkbox" class="accent-primary" />
+      <span class="text-sm">Keep forever</span>
     </div>
   </div>
-  
-  <div class="mb-6 border-b border-gray-700">
-    <div class="flex flex-wrap -mb-px">
-      <button class="settings-tab active mr-2 py-2 px-4 text-primary border-b-2 border-primary font-medium"
-        data-tab="profile">
-        <i class="ti ti-user mr-2"></i>Profile
-      </button>
-      <button
-        class="settings-tab mr-2 py-2 px-4 text-gray-400 hover:text-white border-b-2 border-transparent hover:border-gray-700 font-medium"
-        data-tab="security">
-        <i class="ti ti-shield-lock mr-2"></i>Security
-      </button>
-      <button
-        class="settings-tab mr-2 py-2 px-4 text-gray-400 hover:text-white border-b-2 border-transparent hover:border-gray-700 font-medium"
-        data-tab="logs">
-        <i class="ti ti-file-text mr-2"></i>Logs
-      </button>
+  <div class="mt-6 border-t border-gray-700 pt-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="font-semibold">Telegram alerts</h2>
+        <p class="text-gray-400 text-sm">Configure bot token, chat ID, and which events send messages.</p>
+      </div>
+      <label class="flex items-center gap-2 text-sm">
+        <input id="telegramEnabled" type="checkbox" class="accent-primary" />
+        <span>Enable Telegram</span>
+      </label>
     </div>
-  </div>
-  
-  <div class="bg-gray-800 rounded-lg overflow-hidden">
-    
-    <div id="profile-tab" class="settings-content">
-      <div class="p-6">
-        <h3 class="text-lg font-semibold mb-6">Profile Settings</h3>
-        <form id="profile-form" class="space-y-6" action="/settings/profile" method="post"
-          enctype="multipart/form-data">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="activeTab" value="profile">
-          
-          <div class="space-y-4">
-            <label class="block text-sm font-medium text-gray-300">Profile Photo</label>
-            <div class="flex items-center space-x-6">
-              <div class="relative">
-                <div class="w-24 h-24 rounded-full bg-dark-700 overflow-hidden border-2 border-gray-700">
-                  <img id="profile-preview" src="<%= user.avatar_path || '/images/default-avatar.jpg' %>"
-                    class="w-full h-full object-cover" alt="Profile Photo"
-                    onerror="this.src='/images/default-avatar.jpg'">
-                </div>
-                <div class="absolute bottom-0 right-0">
-                  <label for="profile-upload"
-                    class="flex items-center justify-center w-8 h-8 rounded-full bg-primary hover:bg-blue-600 cursor-pointer shadow-lg transition-colors">
-                    <i class="ti ti-pencil text-white text-sm"></i>
-                  </label>
-                  <input id="profile-upload" name="avatar" type="file" accept="image/*" class="hidden">
-                </div>
-              </div>
-              <div class="text-sm text-gray-400">
-                <p>Upload a new photo</p>
-                <p class="mt-1">Maximum file size: 2MB</p>
-              </div>
-            </div>
-          </div>
-          
-          <div class="space-y-2">
-            <label for="username" class="block text-sm font-medium text-gray-300">Username</label>
-            <div class="relative">
-              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
-                <i class="ti ti-user"></i>
-              </span>
-              <input type="text" id="username" name="username"
-                class="bg-dark-900 text-white pl-10 pr-4 py-2 rounded-lg block w-full sm:max-w-md focus:outline-none focus:ring-1 focus:ring-primary"
-                value="<%= user.username %>">
-            </div>
-          </div>
-          
-          <div class="pt-4">
-            <button type="submit"
-              class="px-4 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg transition-colors">
-              Save Profile Changes
-            </button>
-          </div>
-        </form>
+    <div class="grid md:grid-cols-2 gap-4 mt-4">
+      <div>
+        <label class="block text-sm mb-1">Bot token</label>
+        <div class="flex items-center gap-2">
+          <input id="telegramToken" type="password" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="123456:ABC..." />
+          <button id="toggleToken" type="button" class="text-sm px-3 py-2 bg-dark-700 border border-gray-600 rounded">Show</button>
+        </div>
+        <p class="text-xs text-gray-500 mt-1">Stored securely; masked in future loads.</p>
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Chat ID</label>
+        <input id="telegramChat" type="text" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="@channel or numeric chat id" />
       </div>
     </div>
-    
-    <div id="security-tab" class="settings-content hidden">
-      <div class="p-6">
-        <h3 class="text-lg font-semibold mb-6">Security Settings</h3>
-        <form id="password-form" class="space-y-6" action="/settings/password" method="post">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="activeTab" value="security">
-          
-          <div class="space-y-2">
-            <label for="current-password" class="block text-sm font-medium text-gray-300">Current Password</label>
-            <div class="relative">
-              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
-                <i class="ti ti-lock"></i>
-              </span>
-              <input type="password" id="current-password" name="currentPassword"
-                class="bg-dark-900 text-white pl-10 pr-4 py-2 rounded-lg block w-full sm:max-w-md focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="Enter your current password">
-            </div>
-          </div>
-          
-          <div class="space-y-2">
-            <label for="new-password" class="block text-sm font-medium text-gray-300">New Password</label>
-            <div class="relative sm:max-w-md">
-              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
-                <i class="ti ti-lock"></i>
-              </span>
-              <input type="password" id="new-password" name="newPassword"
-                class="bg-dark-900 text-white pl-10 pr-10 py-2 rounded-lg block w-full focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="Enter new password">
-              <button type="button"
-                class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-white"
-                id="toggle-password">
-                <i class="ti ti-eye"></i>
-              </button>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">
-              Password must be at least 8 characters and include uppercase, lowercase and a number
-            </div>
-          </div>
-          
-          <div class="space-y-2">
-            <label for="confirm-password" class="block text-sm font-medium text-gray-300">Confirm New Password</label>
-            <div class="relative sm:max-w-md">
-              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
-                <i class="ti ti-lock"></i>
-              </span>
-              <input type="password" id="confirm-password" name="confirmPassword"
-                class="bg-dark-900 text-white pl-10 pr-4 py-2 rounded-lg block w-full focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="Confirm new password">
-            </div>
-          </div>
-          
-          <div class="pt-4">
-            <button type="submit"
-              class="px-4 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg transition-colors">
-              Change Password
-            </button>
-          </div>
-        </form>
-
+    <div class="mt-4">
+      <p class="text-sm font-semibold mb-2">Events</p>
+      <div id="telegramEvents" class="grid md:grid-cols-2 gap-2"></div>
+    </div>
+    <div class="mt-4 flex items-center gap-3">
+      <button id="testTelegram" type="button" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Send test</button>
+      <p id="telegramMsg" class="text-sm hidden"></p>
+    </div>
+  </div>
+  <div class="mt-6 border-t border-gray-700 pt-4 grid md:grid-cols-2 gap-4">
+    <div class="p-3 rounded border border-gray-700 bg-dark-700/50">
+      <h3 class="font-semibold">Premium-only controls</h3>
+      <p class="text-xs text-gray-400 mb-2">Audio replace, auto-recovery, and hot swap are locked until Premium.</p>
+      <div class="space-y-2 text-sm text-gray-400">
+        <label class="flex items-center gap-2 opacity-60">
+          <input type="checkbox" disabled class="accent-primary" />
+          <span>Audio Replace (Coming soon)</span>
+        </label>
+        <label class="flex items-center gap-2 opacity-60">
+          <input type="checkbox" disabled class="accent-primary" />
+          <span>Auto-Recovery (Coming soon)</span>
+        </label>
+        <label class="flex items-center gap-2 opacity-60">
+          <input type="checkbox" disabled class="accent-primary" />
+          <span>Hot Swap (Coming soon)</span>
+        </label>
+        <p class="text-xs text-gray-500">Requires Premium tier.</p>
       </div>
     </div>
-
-    <div id="logs-tab" class="settings-content hidden h-[calc(100vh-220px)]">
-      <div class="p-6 h-full flex flex-col">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-4 flex-shrink-0">
-          <h3 class="text-lg font-semibold">Application Logs</h3>
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="relative hidden sm:block">
-              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
-                <i class="ti ti-search"></i>
-              </span>
-              <input type="text" id="log-filter" placeholder="Filter logs..."
-                class="bg-dark-900 text-white pl-10 pr-4 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary w-48">
-            </div>
-            <select id="log-lines" class="hidden sm:block bg-dark-900 text-white px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary">
-              <option value="100">Last 100 lines</option>
-              <option value="200" selected>Last 200 lines</option>
-              <option value="500">Last 500 lines</option>
-              <option value="1000">Last 1000 lines</option>
-            </select>
-            <button id="refresh-logs" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors">
-              <i class="ti ti-refresh mr-1"></i><span class="hidden sm:inline">Refresh</span>
-            </button>
-            <button id="clear-logs" class="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors">
-              <i class="ti ti-trash mr-1"></i><span class="hidden sm:inline">Clear</span>
-            </button>
-          </div>
-        </div>
-        
-        <div class="bg-dark-900 rounded-lg p-4 overflow-hidden flex-1 min-h-0">
-          <div id="logs-container" class="logs-scrollbar font-mono text-xs leading-relaxed overflow-x-auto h-full overflow-y-auto">
-            <div class="text-gray-400 text-center py-8">
-              <i class="ti ti-loader animate-spin text-2xl"></i>
-              <p class="mt-2">Loading logs...</p>
-            </div>
-          </div>
-        </div>
-        
-        <div class="mt-3 flex items-center justify-between text-sm text-gray-400 flex-shrink-0">
-          <div id="log-stats">
-            <span id="log-count">0</span> lines loaded
-          </div>
-          <label class="hidden sm:flex items-center cursor-pointer">
-            <input type="checkbox" id="auto-refresh" class="mr-2 rounded bg-dark-900 border-gray-600 text-primary focus:ring-primary">
-            Auto-refresh every 10s
-          </label>
-        </div>
+    <div class="p-3 rounded border border-gray-700 bg-dark-700/50">
+      <h3 class="font-semibold">Ultimate-only controls</h3>
+      <p class="text-xs text-gray-400 mb-2">Scenes and recurring swap rules will unlock with Ultimate.</p>
+      <div class="space-y-2 text-sm text-gray-400">
+        <label class="flex items-center gap-2 opacity-60">
+          <input type="checkbox" disabled class="accent-primary" />
+          <span>Scenes (Coming soon)</span>
+        </label>
+        <label class="flex items-center gap-2 opacity-60">
+          <input type="checkbox" disabled class="accent-primary" />
+          <span>Recurring Swap Rules (Coming soon)</span>
+        </label>
+        <p class="text-xs text-gray-500">Requires Ultimate tier.</p>
       </div>
     </div>
-
   </div>
-  
-  <style>
-    .logs-scrollbar {
-      scrollbar-width: thin;
-      scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
-    }
-    .logs-scrollbar::-webkit-scrollbar {
-      width: 5px;
-      height: 5px;
-    }
-    .logs-scrollbar::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    .logs-scrollbar::-webkit-scrollbar-thumb {
-      background-color: rgba(156, 163, 175, 0.3);
-      border-radius: 20px;
-    }
-    .logs-scrollbar::-webkit-scrollbar-thumb:hover {
-      background-color: rgba(156, 163, 175, 0.5);
-    }
-  </style>
-  
-  <div id="toast"
-    class="fixed top-16 right-4 bg-dark-800 text-white px-4 py-3 rounded-lg shadow-lg z-50 hidden flex items-center">
-    <i id="toast-icon" class="mr-2"></i>
-    <span id="toast-message"></span>
+  <div class="mt-6 border-t border-gray-700 pt-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="font-semibold">Google Drive</h2>
+        <p class="text-gray-400 text-sm">Save OAuth client details to import assets from Drive.</p>
+      </div>
+      <p id="googleStatus" class="text-sm text-gray-400">Status: not configured</p>
+    </div>
+    <div class="grid md:grid-cols-3 gap-4 mt-3">
+      <div>
+        <label class="block text-sm mb-1">Client ID</label>
+        <input id="googleClientId" type="text" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Client secret</label>
+        <input id="googleClientSecret" type="password" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="Stored securely" />
+      </div>
+      <div>
+        <label class="block text-sm mb-1">Redirect URL</label>
+        <input id="googleRedirect" type="text" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" placeholder="http://<host>:6969/api/assets/google-drive/auth/callback" />
+      </div>
+    </div>
+    <div class="flex items-center gap-3 mt-3">
+      <button id="startGoogleAuth" class="bg-dark-700 border border-gray-600 text-white px-4 py-2 rounded">Connect Google Drive</button>
+      <p class="text-xs text-gray-500">Save client credentials first, then launch OAuth. Tokens are encrypted at rest.</p>
+    </div>
   </div>
-  <script>
-    document.addEventListener('DOMContentLoaded', function () {
-      const tabs = document.querySelectorAll('.settings-tab');
-      const tabContents = document.querySelectorAll('.settings-content');
-      function activateTab(tabName) {
-        tabs.forEach(tab => tab.classList.remove('active', 'text-primary', 'border-primary'));
-        tabs.forEach(tab => tab.classList.add('text-gray-400', 'border-transparent'));
-        tabContents.forEach(content => content.classList.add('hidden'));
-        const selectedTab = document.querySelector(`.settings-tab[data-tab="${tabName}"]`);
-        if (selectedTab) {
-          selectedTab.classList.add('active', 'text-primary', 'border-primary');
-          selectedTab.classList.remove('text-gray-400', 'border-transparent');
-          const selectedContent = document.getElementById(`${tabName}-tab`);
-          if (selectedContent) {
-            selectedContent.classList.remove('hidden');
-          }
-        }
-      }
-      tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-          const tabName = tab.getAttribute('data-tab');
-          activateTab(tabName);
-        });
+  <div class="mt-4 flex items-center justify-between">
+    <div class="text-gray-500 text-sm">Retention and Telegram settings are saved together.</div>
+    <button id="saveSettings" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">Save</button>
+  </div>
+  <p id="settingsMsg" class="text-sm mt-2 hidden"></p>
+</div>
+
+<script>
+  const tz = document.getElementById('settingTimezone');
+  const lang = document.getElementById('settingLanguage');
+  const retention = document.getElementById('settingRetention');
+  const forever = document.getElementById('settingForever');
+  const licenseTier = document.getElementById('licenseTier');
+  const msg = document.getElementById('settingsMsg');
+  const telegramEnabled = document.getElementById('telegramEnabled');
+  const telegramToken = document.getElementById('telegramToken');
+  const telegramChat = document.getElementById('telegramChat');
+  const telegramEventsWrap = document.getElementById('telegramEvents');
+  const telegramMsg = document.getElementById('telegramMsg');
+  const toggleTokenBtn = document.getElementById('toggleToken');
+  const googleClientId = document.getElementById('googleClientId');
+  const googleClientSecret = document.getElementById('googleClientSecret');
+  const googleRedirect = document.getElementById('googleRedirect');
+  const googleStatus = document.getElementById('googleStatus');
+  const googleAuthBtn = document.getElementById('startGoogleAuth');
+  const EVENT_LABELS = {
+    stream_start: 'Stream start',
+    stream_stop: 'Stream stop (manual)',
+    stream_fail: 'Stream failed',
+    retry_gave_up: 'Retry gave up',
+    license_fail: 'License fail',
+    license_grace_started: 'License grace started',
+    license_grace_ended: 'License grace ended',
+  };
+  let telegramEventsState = {};
+
+  function updateRetentionState() {
+    const disableRetention = forever.checked;
+    retention.disabled = disableRetention;
+    retention.classList.toggle('opacity-60', disableRetention);
+  }
+
+  async function fetchJson(url, options) {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.message || 'Request failed');
+    }
+    return res.json();
+  }
+
+  function setGoogleStatusText(status) {
+    if (!status) {
+      googleStatus.textContent = 'Status: not configured';
+      googleStatus.className = 'text-sm text-gray-400';
+      return;
+    }
+    const parts = [];
+    if (status.connected) {
+      parts.push('Connected');
+      googleStatus.className = 'text-sm text-green-400';
+    } else if (status.configured) {
+      parts.push('Configured');
+      googleStatus.className = 'text-sm text-amber-300';
+    } else {
+      parts.push('Not configured');
+      googleStatus.className = 'text-sm text-gray-400';
+    }
+    if (status.redirect_uri) parts.push(`Redirect: ${status.redirect_uri}`);
+    googleStatus.textContent = `Status: ${parts.join(' • ')}`;
+  }
+
+  async function refreshGoogleStatus() {
+    try {
+      const status = await fetchJson('/api/assets/google-drive/auth/status');
+      setGoogleStatusText(status);
+    } catch (err) {
+      setGoogleStatusText(null);
+    }
+  }
+
+  async function loadSettings() {
+    const data = await fetchJson('/api/settings');
+    const s = data.settings || {};
+    licenseTier.value = s.license_tier || 'basic';
+    tz.value = s.timezone || 'UTC';
+    lang.value = s.language || 'en';
+    retention.value = s.retention_days || 30;
+    forever.checked = Boolean(s.keep_forever);
+    updateRetentionState();
+    telegramEnabled.checked = Boolean(s.telegram_enabled);
+    telegramChat.value = s.telegram_chat_id || '';
+    telegramToken.value = '';
+    telegramToken.placeholder = s.telegram_bot_token_masked || '';
+    telegramEventsState = s.telegram_events || {};
+    renderEventToggles();
+    googleClientId.value = s.google_client_id || '';
+    googleClientSecret.value = '';
+    googleClientSecret.placeholder = s.google_client_secret_masked || 'Stored securely';
+    googleRedirect.value = s.google_redirect_uri || '';
+    setGoogleStatusText({ configured: Boolean(s.google_client_id && s.google_client_secret_masked), connected: Boolean(s.google_refresh_token_present), redirect_uri: s.google_redirect_uri });
+  }
+
+  async function saveSettings() {
+    msg.classList.add('hidden');
+    telegramMsg.classList.add('hidden');
+    try {
+      await fetchJson('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timezone: tz.value,
+          language: lang.value,
+          retention_days: Number(retention.value || 30),
+          keep_forever: forever.checked,
+          license_tier: licenseTier.value,
+          telegram_enabled: telegramEnabled.checked,
+          telegram_chat_id: telegramChat.value,
+          telegram_bot_token: telegramToken.value || undefined,
+          telegram_events: telegramEventsState,
+          google_client_id: googleClientId.value,
+          google_client_secret: googleClientSecret.value || undefined,
+          google_redirect_uri: googleRedirect.value,
+        }),
       });
-    <% if (typeof activeTab !== 'undefined' && activeTab) { %>
-        activateTab('<%= activeTab %>');
-    <% } else { %>
-        activateTab('profile');
-    <% } %>
-    const profileUpload = document.getElementById('profile-upload');
-      const profilePreview = document.getElementById('profile-preview');
-      profileUpload.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (file) {
-          if (file.size > 2 * 1024 * 1024) {
-            showToast('error', 'Image too large. Maximum size is 2MB.');
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = function (event) {
-            profilePreview.src = event.target.result;
-          };
-          reader.readAsDataURL(file);
-        }
-      });
-      const profileForm = document.getElementById('profile-form');
-      profileForm.addEventListener('submit', (e) => {
-        const fileInput = document.getElementById('profile-upload');
-        if (fileInput.files.length > 0) {
-          const file = fileInput.files[0];
-          if (file.size > 2 * 1024 * 1024) {
-            e.preventDefault();
-            showToast('error', 'Image too large. Maximum size is 2MB.');
-            return false;
-          }
-        }
-      });
-      const passwordForm = document.getElementById('password-form');
-      passwordForm.addEventListener('submit', (e) => {
-        const currentPassword = document.getElementById('current-password').value;
-        const newPassword = document.getElementById('new-password').value;
-        const confirmPassword = document.getElementById('confirm-password').value;
-        if (!currentPassword) {
-          e.preventDefault();
-          showToast('error', 'Please enter your current password.');
-          return false;
-        }
-        if (!newPassword) {
-          e.preventDefault();
-          showToast('error', 'Please enter a new password.');
-          return false;
-        }
-        if (newPassword !== confirmPassword) {
-          e.preventDefault();
-          showToast('error', 'New passwords do not match.');
-          return false;
-        }
-      });
+      msg.textContent = 'Saved';
+      msg.classList.remove('hidden');
+      msg.classList.remove('text-red-400');
+      msg.classList.add('text-green-400');
+      telegramToken.value = '';
+      googleClientSecret.value = '';
+      refreshGoogleStatus();
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.classList.remove('hidden');
+      msg.classList.remove('text-green-400');
+      msg.classList.add('text-red-400');
+    }
+  }
 
-      const togglePassword = document.getElementById('toggle-password');
-      const newPasswordField = document.getElementById('new-password');
-      togglePassword.addEventListener('click', () => {
-        if (newPasswordField.type === 'password') {
-          newPasswordField.type = 'text';
-          togglePassword.innerHTML = '<i class="ti ti-eye-off"></i>';
-        } else {
-          newPasswordField.type = 'password';
-          togglePassword.innerHTML = '<i class="ti ti-eye"></i>';
-        }
-      });
+  function renderEventToggles() {
+    telegramEventsWrap.innerHTML = '';
+    Object.entries(EVENT_LABELS).forEach(([key, label]) => {
+      const row = document.createElement('label');
+      row.className = 'flex items-center gap-2 text-sm';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'accent-primary';
+      cb.checked = Boolean(telegramEventsState[key]);
+      cb.onchange = () => {
+        telegramEventsState[key] = cb.checked;
+      };
+      row.appendChild(cb);
+      const span = document.createElement('span');
+      span.textContent = label;
+      row.appendChild(span);
+      telegramEventsWrap.appendChild(row);
+    });
+  }
 
-      function showToast(type, message) {
-        const toast = document.getElementById('toast');
-        const toastIcon = document.getElementById('toast-icon');
-        const toastMessage = document.getElementById('toast-message');
-        if (type === 'success') {
-          toastIcon.className = 'ti ti-check text-green-400 text-xl mr-2 font-loaded';
-          toast.classList.add('border-l-4', 'border-green-400');
-          toast.classList.remove('border-l-4', 'border-red-400');
-        } else if (type === 'error') {
-          toastIcon.className = 'ti ti-x text-red-400 text-xl mr-2 font-loaded';
-          toast.classList.add('border-l-4', 'border-red-400');
-          toast.classList.remove('border-l-4', 'border-green-400');
-        }
-        toastMessage.textContent = message;
-        toast.classList.remove('hidden');
-        setTimeout(() => {
-          toast.classList.add('hidden');
-        }, 3000);
-      }
-    <% if (typeof success !== 'undefined' && success) { %>
-        showToast('success', '<%= success %>');
-    <% } %>
-    <% if (typeof error !== 'undefined' && error) { %>
-        showToast('error', '<%= error %>');
-    <% } %>
-
-      const logsContainer = document.getElementById('logs-container');
-      const logFilter = document.getElementById('log-filter');
-      const logLines = document.getElementById('log-lines');
-      const refreshLogsBtn = document.getElementById('refresh-logs');
-      const clearLogsBtn = document.getElementById('clear-logs');
-      const autoRefreshCheckbox = document.getElementById('auto-refresh');
-      const logCount = document.getElementById('log-count');
-      let autoRefreshInterval = null;
-
-      function formatLogLine(line) {
-        let colorClass = 'text-gray-300';
-        if (line.includes('[ERROR]') || line.includes('Error') || line.includes('error')) {
-          colorClass = 'text-red-400';
-        } else if (line.includes('[WARN]') || line.includes('Warning')) {
-          colorClass = 'text-yellow-400';
-        } else if (line.includes('[LOG]') || line.includes('Successfully') || line.includes('success')) {
-          colorClass = 'text-green-400';
-        } else if (line.includes('[Scheduler]') || line.includes('[StreamingService]')) {
-          colorClass = 'text-blue-400';
-        }
-        
-        const timestampRegex = /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/g;
-        line = line.replace(timestampRegex, '<span class="text-purple-400">$1</span>');
-        
-        return `<div class="${colorClass} py-0.5 border-b border-gray-800 hover:bg-gray-800/50">${escapeHtml(line).replace(/&lt;span class="text-purple-400"&gt;/g, '<span class="text-purple-400">').replace(/&lt;\/span&gt;/g, '</span>')}</div>`;
-      }
-
-      function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-      }
-
-      async function loadLogs() {
-        try {
-          const lines = logLines.value;
-          const filter = logFilter.value;
-          const params = new URLSearchParams({ lines, filter });
-          
-          const response = await fetch(`/api/settings/logs?${params}`);
-          const data = await response.json();
-          
-          if (data.success) {
-            if (data.logs.length === 0) {
-              logsContainer.innerHTML = '<div class="text-gray-500 text-center py-8">No logs found</div>';
-              logCount.textContent = '0';
-            } else {
-              logsContainer.innerHTML = data.logs.map(formatLogLine).join('');
-              logCount.textContent = data.logs.length;
-              logsContainer.scrollTop = logsContainer.scrollHeight;
-            }
-          } else {
-            logsContainer.innerHTML = `<div class="text-red-400 text-center py-8">Error: ${data.error}</div>`;
-          }
-        } catch (error) {
-          logsContainer.innerHTML = `<div class="text-red-400 text-center py-8">Failed to load logs: ${error.message}</div>`;
-        }
-      }
-
-      async function clearLogs() {
-        if (!confirm('Are you sure you want to clear all logs?')) return;
-        
-        try {
-          const response = await fetch('/api/settings/logs/clear', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRF-Token': '<%= csrfToken %>'
-            }
-          });
-          const data = await response.json();
-          
-          if (data.success) {
-            showToast('success', 'Logs cleared successfully');
-            loadLogs();
-          } else {
-            showToast('error', data.error || 'Failed to clear logs');
-          }
-        } catch (error) {
-          showToast('error', 'Failed to clear logs');
-        }
-      }
-
-      refreshLogsBtn.addEventListener('click', loadLogs);
-      clearLogsBtn.addEventListener('click', clearLogs);
-      logLines.addEventListener('change', loadLogs);
-      
-      let filterTimeout;
-      logFilter.addEventListener('input', () => {
-        clearTimeout(filterTimeout);
-        filterTimeout = setTimeout(loadLogs, 300);
-      });
-
-      autoRefreshCheckbox.addEventListener('change', () => {
-        if (autoRefreshCheckbox.checked) {
-          autoRefreshInterval = setInterval(loadLogs, 10000);
-        } else {
-          clearInterval(autoRefreshInterval);
-          autoRefreshInterval = null;
-        }
-      });
-
-      const logsTab = document.querySelector('.settings-tab[data-tab="logs"]');
-      logsTab.addEventListener('click', () => {
-        setTimeout(loadLogs, 100);
-      });
+  toggleTokenBtn.addEventListener('click', () => {
+    const showing = telegramToken.type === 'text';
+    telegramToken.type = showing ? 'password' : 'text';
+    toggleTokenBtn.textContent = showing ? 'Show' : 'Hide';
   });
-  </script>
+
+  document.getElementById('testTelegram').addEventListener('click', async () => {
+    telegramMsg.classList.add('hidden');
+    telegramMsg.classList.remove('text-green-400', 'text-red-400');
+    try {
+      await fetchJson('/api/settings/telegram/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegram_bot_token: telegramToken.value || undefined,
+          telegram_chat_id: telegramChat.value || undefined,
+        }),
+      });
+      telegramMsg.textContent = 'Test message sent.';
+      telegramMsg.classList.add('text-green-400');
+    } catch (err) {
+      telegramMsg.textContent = err.message;
+      telegramMsg.classList.add('text-red-400');
+    }
+    telegramMsg.classList.remove('hidden');
+  });
+
+  googleAuthBtn.addEventListener('click', async () => {
+    googleStatus.textContent = 'Status: launching browser flow...';
+    try {
+      const data = await fetchJson('/api/assets/google-drive/auth/start', { method: 'POST' });
+      window.open(data.authUrl, '_blank');
+      googleStatus.textContent = 'Status: waiting for OAuth completion...';
+      setTimeout(refreshGoogleStatus, 5000);
+    } catch (err) {
+      googleStatus.textContent = `Status: ${err.message}`;
+      googleStatus.className = 'text-sm text-red-400';
+    }
+  });
+
+  document.getElementById('saveSettings').onclick = saveSettings;
+  forever.addEventListener('change', updateRetentionState);
+  loadSettings();
+  refreshGoogleStatus();
+</script>
