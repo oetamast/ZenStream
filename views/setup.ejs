@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZenStream Setup</title>
+  <link rel="icon" href="/images/logo_mobile.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.30.0/tabler-icons.min.css">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        fontFamily: {
+          'inter': ['Inter', 'sans-serif'],
+          'sans': ['Inter', 'system-ui', 'sans-serif']
+        },
+        extend: {
+          colors: {
+            'primary': '#0055FF',
+            'secondary': '#0043CA',
+            'dark': {
+              '900': '#121212',
+              '800': '#252525',
+              '700': '#2D2D2D',
+              '600': '#3D3D3D',
+              '500': '#6E6E6E',
+              '400': '#8F8F8F',
+              '100': '#E5E5E5',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-dark-900 text-white font-inter">
+  <div class="min-h-screen flex items-center justify-center px-6">
+    <div class="w-full max-w-2xl bg-dark-800 rounded-xl shadow-xl p-8">
+      <div class="flex justify-center mb-6">
+        <img src="/images/logo_mobile.svg" alt="ZenStream Logo" class="h-10">
+      </div>
+      <h1 class="text-2xl font-semibold text-center mb-2">First-time setup</h1>
+      <p class="text-center text-gray-400 mb-6">Create your administrator account and base settings.</p>
+
+      <% if (error) { %>
+        <div class="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg mb-6">
+          <div class="flex items-center">
+            <i class="ti ti-alert-circle mr-2"></i>
+            <span><%= error %></span>
+          </div>
+        </div>
+      <% } %>
+
+      <form action="/setup" method="post" class="space-y-6">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-gray-300 mb-1" for="username">Admin username</label>
+            <div class="relative">
+              <input id="username" name="username" value="<%= form.username %>" required
+                class="w-full pl-10 pr-4 py-2.5 bg-dark-700 border border-gray-600 rounded-lg focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder="admin" />
+              <i class="ti ti-user absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-300 mb-1" for="timezone">Timezone</label>
+            <select id="timezone" name="timezone" class="w-full bg-dark-700 border border-gray-600 rounded-lg px-3 py-2.5">
+              <option value="UTC" <%= form.timezone === 'UTC' ? 'selected' : '' %>>UTC</option>
+              <option value="America/New_York" <%= form.timezone === 'America/New_York' ? 'selected' : '' %>>America/New_York</option>
+              <option value="Europe/London" <%= form.timezone === 'Europe/London' ? 'selected' : '' %>>Europe/London</option>
+              <option value="Europe/Berlin" <%= form.timezone === 'Europe/Berlin' ? 'selected' : '' %>>Europe/Berlin</option>
+              <option value="Asia/Jakarta" <%= form.timezone === 'Asia/Jakarta' ? 'selected' : '' %>>Asia/Jakarta</option>
+              <option value="Asia/Singapore" <%= form.timezone === 'Asia/Singapore' ? 'selected' : '' %>>Asia/Singapore</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-300 mb-1" for="password">Password</label>
+            <div class="relative">
+              <input type="password" id="password" name="password" required
+                class="w-full pl-10 pr-4 py-2.5 bg-dark-700 border border-gray-600 rounded-lg focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder="Create a strong password" />
+              <i class="ti ti-lock absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-300 mb-1" for="confirmPassword">Confirm password</label>
+            <div class="relative">
+              <input type="password" id="confirmPassword" name="confirmPassword" required
+                class="w-full pl-10 pr-4 py-2.5 bg-dark-700 border border-gray-600 rounded-lg focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder="Repeat password" />
+              <i class="ti ti-lock-check absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-300 mb-1" for="language">Language</label>
+            <select id="language" name="language" class="w-full bg-dark-700 border border-gray-600 rounded-lg px-3 py-2.5">
+              <option value="en" <%= form.language === 'en' ? 'selected' : '' %>>English</option>
+              <option value="id" <%= form.language === 'id' ? 'selected' : '' %>>Bahasa Indonesia</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-300 mb-1" for="retention_days">Retention days</label>
+            <input id="retention_days" name="retention_days" type="number" min="1" max="3650"
+              value="<%= form.retention_days %>"
+              class="w-full bg-dark-700 border border-gray-600 rounded-lg px-3 py-2.5" />
+            <div class="flex items-center mt-2 space-x-2">
+              <input id="keep_forever" name="keep_forever" type="checkbox" <%= form.keep_forever ? 'checked' : '' %>
+                class="w-4 h-4 text-primary bg-dark-700 border-gray-600 rounded" />
+              <label for="keep_forever" class="text-sm text-gray-300">Keep logs forever</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between mt-4">
+          <p class="text-gray-400 text-sm">You will be redirected to login after saving.</p>
+          <button type="submit"
+            class="bg-primary hover:bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium transition-colors">
+            Save &amp; continue
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
