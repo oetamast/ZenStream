@@ -7,8 +7,11 @@ const ensureDirectories = () => {
     path.join(dataRoot, 'assets/audios'),
     path.join(dataRoot, 'assets/sfx'),
     path.join(dataRoot, 'assets/avatars'),
-    path.join(dataRoot, 'thumbs'),
-    path.join(dataRoot, 'logs')
+    path.join(dataRoot, 'assets/thumbs'),
+    path.join(dataRoot, 'logs'),
+    path.join(dataRoot, 'logs/ffmpeg'),
+    path.join(dataRoot, 'db'),
+    path.join(dataRoot, 'config')
   ];
 
   dirs.forEach(dir => {
@@ -29,11 +32,12 @@ module.exports = {
   getUniqueFilename,
   paths: {
     videos: path.join(dataRoot, 'assets/videos'),
-    thumbnails: path.join(dataRoot, 'thumbs'),
+    thumbnails: path.join(dataRoot, 'assets/thumbs'),
     avatars: path.join(dataRoot, 'assets/avatars'),
     audios: path.join(dataRoot, 'assets/audios'),
     sfx: path.join(dataRoot, 'assets/sfx'),
-    logs: path.join(dataRoot, 'logs')
+    logs: path.join(dataRoot, 'logs'),
+    config: path.join(dataRoot, 'config')
   },
   dataRoot
 };

@@ -5,6 +5,7 @@
     <p class="text-gray-400 text-sm">Link an asset, destination, and preset to start streaming.</p>
   </div>
   <div class="flex items-center gap-3">
+    <button id="refreshJobs" class="bg-dark-700 hover:bg-dark-600 text-white px-3 py-2 rounded border border-gray-700">Refresh</button>
     <button id="stopAllBtn" class="hidden bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded">Stop all streams</button>
     <button id="openJobForm" class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded">New Stream</button>
   </div>
@@ -49,6 +50,36 @@
     <div>
       <label class="block text-sm mb-1">Crossfade seconds (loop only)</label>
       <input id="jobCrossfade" type="number" min="0" class="w-full bg-dark-700 border border-gray-600 rounded px-3 py-2" />
+    </div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4 mt-3">
+    <div class="p-3 rounded border border-gray-700 bg-dark-800/50">
+      <h3 class="font-semibold text-sm">Premium-only</h3>
+      <p class="text-xs text-gray-500 mb-2">Audio replace, auto-recovery, and hot swap are coming soon. Requires Premium.</p>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Audio replace (Coming soon)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Auto-recovery (Coming soon)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Hot swap (Coming soon)</span>
+      </label>
+    </div>
+    <div class="p-3 rounded border border-gray-700 bg-dark-800/50">
+      <h3 class="font-semibold text-sm">Ultimate-only</h3>
+      <p class="text-xs text-gray-500 mb-2">Scenes and recurring swap rules will unlock with Ultimate.</p>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Scenes (Coming soon)</span>
+      </label>
+      <label class="flex items-center gap-2 text-sm opacity-60">
+        <input type="checkbox" disabled class="accent-primary" />
+        <span>Recurring swap rules (Coming soon)</span>
+      </label>
     </div>
   </div>
   <div class="mt-4 flex justify-end gap-3">
@@ -193,6 +224,8 @@
       <div class="flex flex-wrap gap-2 mt-3">
         <button class="${runDisabled ? 'bg-gray-600 cursor-not-allowed' : 'bg-primary hover:bg-blue-600'} text-white px-3 py-1 rounded" ${runDisabled ? 'disabled title="Fix required before running"' : ''} onclick="${runDisabled ? '' : `openRun('${job.id}')`}">Run now</button>
         <button class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded" onclick="stopJob('${job.id}')">Stop</button>
+        <a class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded" href="/history" target="_blank">History</a>
+        ${session ? `<button class="bg-dark-700 hover:bg-dark-600 text-white px-3 py-1 rounded border border-gray-600" onclick="viewLog('${session.id}')">View log</button>` : ''}
         ${runDisabled ? `<button class="bg-amber-600 hover:bg-amber-500 text-white px-3 py-1 rounded" onclick="editJob('${job.id}')">Fix</button>` : ''}
       </div>
       ${session ? `<div class="text-xs text-gray-400 mt-2">Current session: ${session.id} (${session.status})</div>` : ''}
@@ -209,6 +242,11 @@
       loop_enabled: document.getElementById('jobLoop').checked,
       crossfade_seconds: document.getElementById('jobCrossfade').value || null,
     };
+    if (!body.video_asset_id || !body.destination_id) {
+      jobFormError.textContent = 'Please select an asset and destination';
+      jobFormError.classList.remove('hidden');
+      return;
+    }
     try {
       const url = editingJobId ? `/api/jobs/${editingJobId}` : '/api/jobs';
       const method = editingJobId ? 'PATCH' : 'POST';
@@ -273,15 +311,34 @@
     await loadJobs();
   }
 
+  async function viewLog(sessionId) {
+    try {
+      const res = await fetch(`/api/history/sessions/${sessionId}/log`);
+      if (!res.ok) {
+        alert('Log not found');
+        return;
+      }
+      const text = await res.text();
+      const win = window.open('', '_blank');
+      win.document.write(`<pre>${text.replace(/</g, '&lt;')}</pre>`);
+      win.document.close();
+    } catch (err) {
+      alert('Failed to load log');
+    }
+  }
+
   stopAllBtn.onclick = async () => {
     if (!confirm('Stop all running streams?')) return;
     await fetchJson('/api/sessions/stop-all', { method: 'POST' });
     await loadJobs();
   };
 
+  document.getElementById('refreshJobs').onclick = loadJobs;
+
   (async function init() {
     toggleRunMode();
     await loadSelects();
     await loadJobs();
+    setInterval(loadJobs, 10000);
   })();
 </script>

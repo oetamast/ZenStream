@@ -12,7 +12,7 @@ RUN npm install --production
 COPY . .
 
 RUN mkdir -p /app/db \
-  && mkdir -p /data/assets/videos /data/assets/audios /data/assets/sfx /data/assets/avatars /data/thumbs /data/logs
+  && mkdir -p /data/assets/videos /data/assets/audios /data/assets/sfx /data/assets/avatars /data/assets/thumbs /data/logs
 
 EXPOSE 6969
 

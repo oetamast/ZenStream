@@ -127,6 +127,15 @@ async function checkIfUsersExist() {
   }
 }
 
+async function checkIfAdminExists() {
+  try {
+    const result = await get("SELECT COUNT(*) as count FROM users WHERE LOWER(user_role) = 'admin'");
+    return result && result.count > 0;
+  } catch (err) {
+    return false;
+  }
+}
+
 module.exports = {
   db,
   dbPath,
@@ -135,6 +144,7 @@ module.exports = {
   all,
   initializeDatabase,
   checkIfUsersExist,
+  checkIfAdminExists,
   getCurrentMigrationVersion,
 };
 

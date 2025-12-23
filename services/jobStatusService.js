@@ -4,6 +4,10 @@ const { JobsRepository, SchedulesRepository, SessionsRepository } = require('../
 async function refreshJobStatus(jobId) {
   const job = await JobsRepository.findById(jobId);
   if (!job) return null;
+  if (!job.enabled) {
+    await JobsRepository.updateStatus(job.id, 'invalid', job.invalid_reason || 'Job disabled');
+    return 'invalid';
+  }
   if (job.invalid_reason) {
     await JobsRepository.updateStatus(job.id, 'invalid', job.invalid_reason);
     return 'invalid';

@@ -1,6 +1,7 @@
-const { DestinationsRepository } = require('../db/repositories');
+const { DestinationsRepository, JobsRepository } = require('../db/repositories');
 const { recordEvent } = require('./eventService');
 const { encryptSecret, decryptSecret } = require('../utils/crypto');
+const { invalidateJobs } = require('./jobService');
 
 function buildRtmpTarget(stream_url, stream_key) {
   const trimmedUrl = (stream_url || '').trim().replace(/\/$/, '');
@@ -85,14 +86,27 @@ async function updateDestination(id, payload) {
   return serialize(updated);
 }
 
+async function listImpactedJobsForDestination(destinationId) {
+  const jobs = await JobsRepository.findByDestination(destinationId);
+  return jobs || [];
+}
+
 async function deleteDestination(id) {
   const existing = await DestinationsRepository.findById(id);
   if (!existing) return false;
+  const impactedJobs = await listImpactedJobsForDestination(id);
   await DestinationsRepository.remove(id);
+  if (impactedJobs.length) {
+    const reason = `Destination removed: ${existing.name}. Please select a destination.`;
+    await invalidateJobs(
+      impactedJobs.map((j) => j.id),
+      reason
+    );
+  }
   await recordEvent({
     event_type: 'destination_deleted',
-    message: `Destination ${existing.name} deleted`,
-    metadata: { platform: existing.platform },
+    message: `Destination ${existing.name} deleted (impacted ${impactedJobs.length} jobs)`,
+    metadata: { platform: existing.platform, impacted_jobs: impactedJobs.length },
   });
   return true;
 }
@@ -122,4 +136,5 @@ module.exports = {
   getDestination,
   buildRtmpTarget,
   validateDestinationInput,
+  listImpactedJobsForDestination,
 };
